@@ -1792,7 +1792,7 @@ function ChatPage(props: {
       </Sheet>
 
       <CardContent className="min-h-0 flex-1 p-0">
-        <div className="flex h-full min-h-0 md:flex-row">
+        <div className="flex h-full min-h-0 min-w-0 md:flex-row">
           {/* Desktop sidebar — hidden on mobile */}
           {hasChats ? (
             <aside className="hidden md:block shrink-0 md:w-72 md:border-r">
@@ -1800,11 +1800,11 @@ function ChatPage(props: {
             </aside>
           ) : null}
 
-          <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <div
               ref={chatScrollRef}
               className={cn(
-                'h-full overflow-y-auto px-4 py-4 md:px-6',
+                'h-full overflow-x-hidden overflow-y-auto px-3 py-4 md:px-6',
                 messages.length === 0 ? '' : 'space-y-4',
               )}
             >
@@ -1915,7 +1915,7 @@ function InviteFriendEmptyState({ inviteToken, selectedModel }: { inviteToken: s
   }
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="mx-auto w-full max-w-3xl">
       <button
         type="button"
         onClick={() => setOpen(!open)}
