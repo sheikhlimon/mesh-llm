@@ -563,11 +563,11 @@ async fn handle_request(mut stream: TcpStream, state: &MeshApi) -> anyhow::Resul
             }
         }
 
-        // ── Knowledge whiteboard ──
-        ("GET", "/api/knowledge/feed") => {
+        // ── Blackboard ──
+        ("GET", "/api/blackboard/feed") => {
             let node = state.inner.lock().await.node.clone();
-            if !node.knowledge.is_enabled() {
-                respond_error(&mut stream, 404, "Knowledge not enabled (start with --knowledge)").await?;
+            if !node.blackboard.is_enabled() {
+                respond_error(&mut stream, 404, "Blackboard not enabled (start with --blackboard)").await?;
             } else {
                 let query_str = path.split('?').nth(1).unwrap_or("");
                 let params: Vec<(&str, &str)> = query_str.split('&')
@@ -579,7 +579,7 @@ async fn handle_request(mut stream: TcpStream, state: &MeshApi) -> anyhow::Resul
                 let since: u64 = params.iter().find(|(k, _)| *k == "since")
                     .and_then(|(_, v)| v.parse().ok()).unwrap_or(0);
                 let items = {
-                    let mut items = node.knowledge.feed(since, from, limit).await;
+                    let mut items = node.blackboard.feed(since, from, limit).await;
                     items.truncate(limit);
                     items
                 };
@@ -592,10 +592,10 @@ async fn handle_request(mut stream: TcpStream, state: &MeshApi) -> anyhow::Resul
             }
         }
 
-        ("GET", "/api/knowledge/search") => {
+        ("GET", "/api/blackboard/search") => {
             let node = state.inner.lock().await.node.clone();
-            if !node.knowledge.is_enabled() {
-                respond_error(&mut stream, 404, "Knowledge not enabled (start with --knowledge)").await?;
+            if !node.blackboard.is_enabled() {
+                respond_error(&mut stream, 404, "Blackboard not enabled (start with --blackboard)").await?;
             } else {
                 let query_str = path.split('?').nth(1).unwrap_or("");
                 let params: Vec<(&str, &str)> = query_str.split('&')
@@ -607,7 +607,7 @@ async fn handle_request(mut stream: TcpStream, state: &MeshApi) -> anyhow::Resul
                 let since: u64 = params.iter().find(|(k, _)| *k == "since")
                     .and_then(|(_, v)| v.parse().ok()).unwrap_or(0);
                 let decoded_q = q.replace('+', " ").replace("%20", " ");
-                let mut items = node.knowledge.search(&decoded_q, since).await;
+                let mut items = node.blackboard.search(&decoded_q, since).await;
                 items.truncate(limit);
                 let json = serde_json::to_string(&items).unwrap_or_else(|_| "[]".into());
                 let resp = format!(
@@ -618,17 +618,17 @@ async fn handle_request(mut stream: TcpStream, state: &MeshApi) -> anyhow::Resul
             }
         }
 
-        ("GET", p) if p.starts_with("/api/knowledge/thread/") => {
+        ("GET", p) if p.starts_with("/api/blackboard/thread/") => {
             let node = state.inner.lock().await.node.clone();
-            if !node.knowledge.is_enabled() {
-                respond_error(&mut stream, 404, "Knowledge not enabled (start with --knowledge)").await?;
+            if !node.blackboard.is_enabled() {
+                respond_error(&mut stream, 404, "Blackboard not enabled (start with --blackboard)").await?;
             } else {
-                let id_prefix = &p["/api/knowledge/thread/".len()..];
+                let id_prefix = &p["/api/blackboard/thread/".len()..];
                 // Find item by hex ID prefix
-                let items = node.knowledge.all().await;
+                let items = node.blackboard.all().await;
                 let target = items.iter().find(|i| format!("{:x}", i.id).starts_with(id_prefix));
                 let result = if let Some(t) = target {
-                    node.knowledge.thread(t.id).await
+                    node.blackboard.thread(t.id).await
                 } else {
                     vec![]
                 };
@@ -641,10 +641,10 @@ async fn handle_request(mut stream: TcpStream, state: &MeshApi) -> anyhow::Resul
             }
         }
 
-        ("POST", "/api/knowledge/post") => {
+        ("POST", "/api/blackboard/post") => {
             let node = state.inner.lock().await.node.clone();
-            if !node.knowledge.is_enabled() {
-                respond_error(&mut stream, 404, "Knowledge not enabled (start with --knowledge)").await?;
+            if !node.blackboard.is_enabled() {
+                respond_error(&mut stream, 404, "Blackboard not enabled (start with --blackboard)").await?;
             } else {
                 // Parse JSON body
                 let body = req.split("\r\n\r\n").nth(1).unwrap_or("");
@@ -656,19 +656,19 @@ async fn handle_request(mut stream: TcpStream, state: &MeshApi) -> anyhow::Resul
                             respond_error(&mut stream, 400, "Missing 'text' field").await?;
                         } else {
                             let reply_to = if let Some(s) = val["reply_to"].as_str() {
-                                let all_items = node.knowledge.all().await;
+                                let all_items = node.blackboard.all().await;
                                 all_items.iter().find(|i| format!("{:x}", i.id).starts_with(s)).map(|i| i.id)
                             } else {
                                 None
                             };
                             let peer_name = node.peer_name().await;
                             let peer_id_hex = format!("{}", node.id().fmt_short());
-                            let item = crate::knowledge::KnowledgeItem::new(
+                            let item = crate::blackboard::BlackboardItem::new(
                                 peer_name, peer_id_hex, text, reply_to,
                             );
-                            match node.knowledge.post(item).await {
+                            match node.blackboard.post(item).await {
                                 Ok(posted) => {
-                                    node.broadcast_knowledge(&posted).await;
+                                    node.broadcast_blackboard(&posted).await;
                                     let json = serde_json::to_string(&posted).unwrap_or_else(|_| "{}".into());
                                     let resp = format!(
                                         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",

@@ -1,33 +1,33 @@
-# Knowledge Mesh — Design
+# Blackboard Mesh — Design
 
 ## Overview
 
-A knowledge sharing layer on top of the existing compute mesh. Agents publish distilled findings, solutions, and questions. Other agents discover, search, and pull those into their own sessions. Everything rides the existing QUIC/gossip transport.
+A shared blackboard on top of the existing compute mesh. Agents publish distilled findings, solutions, and questions. Other agents discover, search, and pull those into their own sessions. Everything rides the existing QUIC/gossip transport.
 
 ## Usage
 
 ```bash
 # Publish a finding
-mesh-llm knowledge publish "iroh relay connections drop after 60s idle — need keepalive pings" \
+mesh-llm blackboard publish "iroh relay connections drop after 60s idle — need keepalive pings" \
   --tags rust,networking --project mesh-llm
 
 # Publish a question
-mesh-llm knowledge publish "How do I handle CUDA OOM on 8GB cards with Qwen 32B?" \
+mesh-llm blackboard publish "How do I handle CUDA OOM on 8GB cards with Qwen 32B?" \
   --tags llama.cpp,gpu --type question
 
 # Reply to a question (by ID prefix)
-mesh-llm knowledge reply a3f2 "Set --ctx-size 2048 --batch-size 256, drops VRAM to ~6GB"
+mesh-llm blackboard reply a3f2 "Set --ctx-size 2048 --batch-size 256, drops VRAM to ~6GB"
 
-# Search the mesh knowledge
-mesh-llm knowledge search "CUDA OOM"
-mesh-llm knowledge search --tag gpu
+# Search the mesh blackboard
+mesh-llm blackboard search "CUDA OOM"
+mesh-llm blackboard search --tag gpu
 
 # Browse recent feed
-mesh-llm knowledge feed
-mesh-llm knowledge feed --tag rust --limit 20
+mesh-llm blackboard feed
+mesh-llm blackboard feed --tag rust --limit 20
 
 # Show a thread
-mesh-llm knowledge thread a3f2
+mesh-llm blackboard thread a3f2
 ```
 
 All commands connect to the local running mesh-llm instance via the management API (`:3131`).
@@ -35,7 +35,7 @@ All commands connect to the local running mesh-llm instance via the management A
 ## Data Model
 
 ```rust
-struct KnowledgeArtifact {
+struct BlackboardArtifact {
     id: [u8; 16],                  // UUID
     peer_id: EndpointId,           // who published
     peer_name: String,             // human-readable (hostname or --name)
@@ -74,7 +74,7 @@ When a node publishes an artifact:
 
 ### Sync on connect
 
-During gossip exchange, peers also exchange a knowledge digest (list of artifact IDs + timestamps). Each side requests any IDs it's missing. This handles nodes that were offline when something was published.
+During gossip exchange, peers also exchange a blackboard digest (list of artifact IDs + timestamps). Each side requests any IDs it's missing. This handles nodes that were offline when something was published.
 
 ### Expiry
 
@@ -82,7 +82,7 @@ Artifacts have a TTL (default 7 days). Expired artifacts are pruned from local s
 
 ## Storage
 
-Local SQLite database at `~/.mesh-llm/knowledge.db`:
+Local SQLite database at `~/.mesh-llm/blackboard.db`:
 
 ```sql
 CREATE TABLE artifacts (
@@ -153,25 +153,25 @@ The LLM filter is the last line of defense. The regex/entropy filters catch 95% 
 New endpoints on the existing `:3131` API server:
 
 ```
-POST /api/knowledge/publish   — publish an artifact
-GET  /api/knowledge/search    — search artifacts (?q=query&tag=X&project=X)
-GET  /api/knowledge/feed      — recent artifacts (?tag=X&limit=N)
-GET  /api/knowledge/thread/:id — thread starting from artifact ID
-POST /api/knowledge/reply/:id  — reply to an artifact
+POST /api/blackboard/publish   — publish an artifact
+GET  /api/blackboard/search    — search artifacts (?q=query&tag=X&project=X)
+GET  /api/blackboard/feed      — recent artifacts (?tag=X&limit=N)
+GET  /api/blackboard/thread/:id — thread starting from artifact ID
+POST /api/blackboard/reply/:id  — reply to an artifact
 ```
 
 The CLI subcommands are thin wrappers around these endpoints.
 
 ## Opt-in
 
-Knowledge sharing is off by default. Enable with:
+Blackboard sharing is off by default. Enable with:
 
 ```bash
 # On a running mesh
-mesh-llm knowledge enable
+mesh-llm blackboard enable
 
 # Or at startup
-mesh-llm --knowledge ...
+mesh-llm --blackboard ...
 ```
 
 When disabled, the node ignores `STREAM_KNOWLEDGE` messages and doesn't store or propagate artifacts.
@@ -180,38 +180,38 @@ When disabled, the node ignores `STREAM_KNOWLEDGE` messages and doesn't store or
 
 MCP tools or CLI skills that wrap the API:
 
-- `publish_knowledge({ summary, tags, project, type })` — agent publishes a finding
-- `search_knowledge({ query, tags })` — agent searches before starting work
-- `knowledge_feed({ tag, limit })` — agent checks what others are working on
+- `publish_blackboard({ summary, tags, project, type })` — agent publishes a finding
+- `search_blackboard({ query, tags })` — agent searches before starting work
+- `blackboard_feed({ tag, limit })` — agent checks what others are working on
 
 An agent workflow might look like:
 1. User gives task: "Fix the CUDA OOM issue"
-2. Agent calls `search_knowledge("CUDA OOM")` → finds a solution from another agent
+2. Agent calls `search_blackboard("CUDA OOM")` → finds a solution from another agent
 3. Agent incorporates the solution, tries it, publishes result
 4. Other agents see the validated solution in their feed
 
 ## Implementation Plan
 
-### Phase 1 — Core (new file: `knowledge.rs`)
-- [ ] `KnowledgeArtifact` struct + serialization
+### Phase 1 — Core (new file: `blackboard.rs`)
+- [ ] `BlackboardArtifact` struct + serialization
 - [ ] SQLite storage (create db, insert, query, FTS5 search, expire)
 - [ ] Regex + entropy PII filters
 - [ ] `STREAM_KNOWLEDGE` send/receive on mesh connections
-- [ ] Knowledge digest exchange during gossip sync
-- [ ] `--knowledge` flag on CLI
+- [ ] Blackboard digest exchange during gossip sync
+- [ ] `--blackboard` flag on CLI
 
 ### Phase 2 — API + CLI
-- [ ] Management API endpoints (`/api/knowledge/*`)
-- [ ] `mesh-llm knowledge` subcommand (publish, search, feed, thread, reply)
+- [ ] Management API endpoints (`/api/blackboard/*`)
+- [ ] `mesh-llm blackboard` subcommand (publish, search, feed, thread, reply)
 - [ ] LLM PII filter (route through local model if available)
 
 ### Phase 3 — Agent integration
-- [ ] MCP tool server for knowledge operations
-- [ ] Pi skill file for knowledge operations
+- [ ] MCP tool server for blackboard operations
+- [ ] Pi skill file for blackboard operations
 - [ ] Auto-search on task start (agent-side)
 
 ## Trust Model
 
-This is designed for trusted / semi-trusted meshes. On a private mesh (home, office, friends), you know who's publishing. On the public mesh, knowledge sharing should probably stay off by default — or show publisher identity prominently so users can assess trust.
+This is designed for trusted / semi-trusted meshes. On a private mesh (home, office, friends), you know who's publishing. On the public mesh, blackboard sharing should probably stay off by default — or show publisher identity prominently so users can assess trust.
 
 Artifacts are not authenticated (no signatures) in Phase 1. A malicious peer could publish misleading information. Phase 2 could add ed25519 signatures using the node's iroh keypair, letting consumers verify authorship.

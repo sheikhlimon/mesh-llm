@@ -1,4 +1,4 @@
-//! Knowledge whiteboard — shared ephemeral text messages across the mesh.
+//! Blackboard — shared ephemeral text messages across the mesh.
 //!
 //! Every node holds the same in-memory list (eventually consistent via flood-fill).
 //! Items expire after 48 hours and the list is capped at 500 items.
@@ -23,9 +23,9 @@ fn now_secs() -> u64 {
         .as_secs()
 }
 
-/// A single knowledge item — just text from someone at a time.
+/// A single blackboard item — just text from someone at a time.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct KnowledgeItem {
+pub struct BlackboardItem {
     /// Unique ID (timestamp nanos + random bits to avoid collision).
     pub id: u64,
     /// Display name of the author.
@@ -40,7 +40,7 @@ pub struct KnowledgeItem {
     pub reply_to: Option<u64>,
 }
 
-impl KnowledgeItem {
+impl BlackboardItem {
     pub fn new(from: String, peer_id: String, text: String, reply_to: Option<u64>) -> Self {
         let ts = now_secs();
         // ID = timestamp nanos for uniqueness, with random low bits
@@ -61,11 +61,11 @@ impl KnowledgeItem {
     }
 }
 
-/// Wire message for knowledge protocol.
+/// Wire message for blackboard protocol.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum KnowledgeMessage {
+pub enum BlackboardMessage {
     /// Broadcast a new item to peers.
-    Post(KnowledgeItem),
+    Post(BlackboardItem),
     /// Request: send me all your item IDs.
     SyncRequest,
     /// Response: here are my item IDs.
@@ -73,19 +73,19 @@ pub enum KnowledgeMessage {
     /// Request: send me these items (by ID).
     FetchRequest(Vec<u64>),
     /// Response: here are the items you asked for.
-    FetchResponse(Vec<KnowledgeItem>),
+    FetchResponse(Vec<BlackboardItem>),
 }
 
-/// In-memory knowledge store. Shared across the node.
+/// In-memory blackboard store. Shared across the node.
 #[derive(Clone)]
-pub struct KnowledgeStore {
-    items: Arc<Mutex<Vec<KnowledgeItem>>>,
+pub struct BlackboardStore {
+    items: Arc<Mutex<Vec<BlackboardItem>>>,
     enabled: Arc<std::sync::atomic::AtomicBool>,
     /// Rate limit tracking: peer_id → list of post timestamps (unix secs).
     rate_log: Arc<Mutex<std::collections::HashMap<String, Vec<u64>>>>,
 }
 
-impl KnowledgeStore {
+impl BlackboardStore {
     pub fn new(enabled: bool) -> Self {
         Self {
             items: Arc::new(Mutex::new(Vec::new())),
@@ -104,7 +104,7 @@ impl KnowledgeStore {
 
     /// Insert an item if not already present. Returns true if new.
     /// Used for items received from the network (no rate limiting).
-    pub async fn insert(&self, item: KnowledgeItem) -> bool {
+    pub async fn insert(&self, item: BlackboardItem) -> bool {
         let mut items = self.items.lock().await;
         if items.iter().any(|i| i.id == item.id) {
             return false;
@@ -116,7 +116,7 @@ impl KnowledgeStore {
 
     /// Post a new item locally — enforces rate limit and text length.
     /// Returns Ok(item) on success, Err(reason) if rejected.
-    pub async fn post(&self, item: KnowledgeItem) -> Result<KnowledgeItem, String> {
+    pub async fn post(&self, item: BlackboardItem) -> Result<BlackboardItem, String> {
         // Text length check
         if item.text.len() > MAX_TEXT_LEN {
             return Err(format!("Message too long ({} bytes, max {})", item.text.len(), MAX_TEXT_LEN));
@@ -140,7 +140,7 @@ impl KnowledgeStore {
     }
 
     /// Get all items (newest first).
-    pub async fn all(&self) -> Vec<KnowledgeItem> {
+    pub async fn all(&self) -> Vec<BlackboardItem> {
         let mut items = self.items.lock().await;
         self.prune_locked(&mut items);
         let mut result = items.clone();
@@ -155,7 +155,7 @@ impl KnowledgeStore {
     }
 
     /// Get items by IDs.
-    pub async fn get_by_ids(&self, ids: &[u64]) -> Vec<KnowledgeItem> {
+    pub async fn get_by_ids(&self, ids: &[u64]) -> Vec<BlackboardItem> {
         let items = self.items.lock().await;
         items.iter().filter(|i| ids.contains(&i.id)).cloned().collect()
     }
@@ -164,7 +164,7 @@ impl KnowledgeStore {
     /// Query is split into terms — any term matching is a hit.
     /// Results ranked by number of matching terms (most relevant first).
     /// `since` filters to items newer than this unix timestamp (0 = no filter).
-    pub async fn search(&self, query: &str, since: u64) -> Vec<KnowledgeItem> {
+    pub async fn search(&self, query: &str, since: u64) -> Vec<BlackboardItem> {
         let terms: Vec<String> = query.to_lowercase()
             .split_whitespace()
             .filter(|w| !w.is_empty())
@@ -175,7 +175,7 @@ impl KnowledgeStore {
         }
         let mut items = self.items.lock().await;
         self.prune_locked(&mut items);
-        let mut scored: Vec<(usize, KnowledgeItem)> = items.iter()
+        let mut scored: Vec<(usize, BlackboardItem)> = items.iter()
             .filter(|i| since == 0 || i.timestamp > since)
             .filter_map(|i| {
                 let text_lower = i.text.to_lowercase();
@@ -193,7 +193,7 @@ impl KnowledgeStore {
 
 
     /// Get a thread: the given item + all replies.
-    pub async fn thread(&self, id: u64) -> Vec<KnowledgeItem> {
+    pub async fn thread(&self, id: u64) -> Vec<BlackboardItem> {
         let items = self.items.lock().await;
         // Find the root item
         let root = items.iter().find(|i| i.id == id).cloned();
@@ -221,7 +221,7 @@ impl KnowledgeStore {
 
     /// Feed: items newer than a timestamp, optionally filtered by peer.
     #[allow(dead_code)]
-    pub async fn feed(&self, since: u64, from: Option<&str>, limit: usize) -> Vec<KnowledgeItem> {
+    pub async fn feed(&self, since: u64, from: Option<&str>, limit: usize) -> Vec<BlackboardItem> {
         let mut items = self.items.lock().await;
         self.prune_locked(&mut items);
         let mut result: Vec<_> = items.iter()
@@ -235,7 +235,7 @@ impl KnowledgeStore {
     }
 
     /// Prune old and excess items.
-    fn prune_locked(&self, items: &mut Vec<KnowledgeItem>) {
+    fn prune_locked(&self, items: &mut Vec<BlackboardItem>) {
         let cutoff = now_secs().saturating_sub(TTL_SECS);
         items.retain(|i| i.timestamp > cutoff);
         if items.len() > MAX_ITEMS {
@@ -380,17 +380,17 @@ mod tests {
     }
 
     #[test]
-    fn test_knowledge_item_unique_ids() {
-        let a = KnowledgeItem::new("alice".into(), "abc".into(), "hello".into(), None);
+    fn test_blackboard_item_unique_ids() {
+        let a = BlackboardItem::new("alice".into(), "abc".into(), "hello".into(), None);
         std::thread::sleep(std::time::Duration::from_millis(1));
-        let b = KnowledgeItem::new("bob".into(), "def".into(), "world".into(), None);
+        let b = BlackboardItem::new("bob".into(), "def".into(), "world".into(), None);
         assert_ne!(a.id, b.id);
     }
 
     #[tokio::test]
     async fn test_store_insert_dedup() {
-        let store = KnowledgeStore::new(true);
-        let item = KnowledgeItem::new("alice".into(), "abc".into(), "hello".into(), None);
+        let store = BlackboardStore::new(true);
+        let item = BlackboardItem::new("alice".into(), "abc".into(), "hello".into(), None);
         assert!(store.insert(item.clone()).await);
         assert!(!store.insert(item).await); // duplicate
         assert_eq!(store.all().await.len(), 1);
@@ -398,9 +398,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_store_search_single_term() {
-        let store = KnowledgeStore::new(true);
-        store.insert(KnowledgeItem::new("alice".into(), "a".into(), "CUDA OOM fix".into(), None)).await;
-        store.insert(KnowledgeItem::new("bob".into(), "b".into(), "networking stuff".into(), None)).await;
+        let store = BlackboardStore::new(true);
+        store.insert(BlackboardItem::new("alice".into(), "a".into(), "CUDA OOM fix".into(), None)).await;
+        store.insert(BlackboardItem::new("bob".into(), "b".into(), "networking stuff".into(), None)).await;
         let results = store.search("cuda", 0).await;
         assert_eq!(results.len(), 1);
         assert!(results[0].text.contains("CUDA"));
@@ -408,10 +408,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_store_search_multi_term_or() {
-        let store = KnowledgeStore::new(true);
-        store.insert(KnowledgeItem::new("alice".into(), "a".into(), "CUDA OOM fix".into(), None)).await;
-        store.insert(KnowledgeItem::new("bob".into(), "b".into(), "networking refactor".into(), None)).await;
-        store.insert(KnowledgeItem::new("carol".into(), "c".into(), "unrelated stuff".into(), None)).await;
+        let store = BlackboardStore::new(true);
+        store.insert(BlackboardItem::new("alice".into(), "a".into(), "CUDA OOM fix".into(), None)).await;
+        store.insert(BlackboardItem::new("bob".into(), "b".into(), "networking refactor".into(), None)).await;
+        store.insert(BlackboardItem::new("carol".into(), "c".into(), "unrelated stuff".into(), None)).await;
         // "CUDA networking" should match both alice and bob (OR)
         let results = store.search("CUDA networking", 0).await;
         assert_eq!(results.len(), 2);
@@ -419,10 +419,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_store_search_ranking() {
-        let store = KnowledgeStore::new(true);
-        store.insert(KnowledgeItem::new("alice".into(), "a".into(), "CUDA OOM on GPU".into(), None)).await;
+        let store = BlackboardStore::new(true);
+        store.insert(BlackboardItem::new("alice".into(), "a".into(), "CUDA OOM on GPU".into(), None)).await;
         std::thread::sleep(std::time::Duration::from_millis(1));
-        store.insert(KnowledgeItem::new("bob".into(), "b".into(), "CUDA fix for GPU OOM issue".into(), None)).await;
+        store.insert(BlackboardItem::new("bob".into(), "b".into(), "CUDA fix for GPU OOM issue".into(), None)).await;
         // "CUDA OOM GPU" — bob matches 3 terms, alice matches 3 terms, bob is newer
         let results = store.search("CUDA OOM GPU", 0).await;
         assert_eq!(results.len(), 2);
@@ -430,21 +430,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_post_rate_limit() {
-        let store = KnowledgeStore::new(true);
+        let store = BlackboardStore::new(true);
         for i in 0..10 {
-            let item = KnowledgeItem::new("alice".into(), "a".into(), format!("msg {i}"), None);
+            let item = BlackboardItem::new("alice".into(), "a".into(), format!("msg {i}"), None);
             assert!(store.post(item).await.is_ok());
         }
         // 11th should be rate limited
-        let item = KnowledgeItem::new("alice".into(), "a".into(), "one too many".into(), None);
+        let item = BlackboardItem::new("alice".into(), "a".into(), "one too many".into(), None);
         assert!(store.post(item).await.is_err());
     }
 
     #[tokio::test]
     async fn test_post_text_too_long() {
-        let store = KnowledgeStore::new(true);
+        let store = BlackboardStore::new(true);
         let long_text = "x".repeat(5000);
-        let item = KnowledgeItem::new("alice".into(), "a".into(), long_text, None);
+        let item = BlackboardItem::new("alice".into(), "a".into(), long_text, None);
         let result = store.post(item).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("too long"));
@@ -452,12 +452,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_store_thread() {
-        let store = KnowledgeStore::new(true);
-        let q = KnowledgeItem::new("alice".into(), "a".into(), "How to fix OOM?".into(), None);
+        let store = BlackboardStore::new(true);
+        let q = BlackboardItem::new("alice".into(), "a".into(), "How to fix OOM?".into(), None);
         let q_id = q.id;
         store.insert(q).await;
         std::thread::sleep(std::time::Duration::from_millis(1));
-        let a = KnowledgeItem::new("bob".into(), "b".into(), "Set ctx-size 2048".into(), Some(q_id));
+        let a = BlackboardItem::new("bob".into(), "b".into(), "Set ctx-size 2048".into(), Some(q_id));
         store.insert(a).await;
         let thread = store.thread(q_id).await;
         assert_eq!(thread.len(), 2);

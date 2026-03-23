@@ -1,7 +1,7 @@
 mod api;
 mod download;
 mod election;
-mod knowledge;
+mod blackboard;
 mod launch;
 mod mesh;
 mod moe;
@@ -138,11 +138,11 @@ struct Cli {
     #[arg(long)]
     nostr_relay: Vec<String>,
 
-    /// Enable the knowledge whiteboard — share text messages across the mesh. Works on any node (with or without a model).
+    /// Enable the blackboard — agents share status, findings, and questions across the mesh. Works on any node (with or without a model).
     #[arg(long)]
-    knowledge: bool,
+    blackboard: bool,
 
-    /// Your display name on the knowledge whiteboard (default: short node ID).
+    /// Your display name on the blackboard (default: short node ID).
     #[arg(long)]
     name: Option<String>,
 
@@ -213,21 +213,21 @@ enum Command {
         #[arg(long, default_value = "9337")]
         port: u16,
     },
-    /// Knowledge whiteboard — post, search, and read messages shared across the mesh.
+    /// Blackboard — post, search, and read messages shared across the mesh.
     ///
-    /// Post a message:   mesh-llm knowledge "your message here"
-    /// Show feed:        mesh-llm knowledge
-    /// Search:           mesh-llm knowledge --search "query"
-    /// From a peer:      mesh-llm knowledge --from tyler
-    /// Install skill:    mesh-llm knowledge install-skill
+    /// Post a message:   mesh-llm blackboard "your message here"
+    /// Show feed:        mesh-llm blackboard
+    /// Search:           mesh-llm blackboard --search "query"
+    /// From a peer:      mesh-llm blackboard --from tyler
+    /// Install skill:    mesh-llm blackboard install-skill
     ///
     /// Conventions: prefix messages with QUESTION:, STATUS:, FINDING:, TIP: etc.
     /// Search picks these up naturally via multi-term OR matching.
-    #[command(name = "knowledge")]
-    Knowledge {
+    #[command(name = "blackboard")]
+    Blackboard {
         /// Message to post (if provided).
         text: Option<String>,
-        /// Search the whiteboard.
+        /// Search the blackboard.
         #[arg(long)]
         search: Option<String>,
         /// Filter by author name.
@@ -314,11 +314,11 @@ async fn main() -> Result<()> {
             Command::Claude { model, port } => {
                 return run_claude(model.clone(), *port).await;
             }
-            Command::Knowledge { text, search, from, reply, thread, since, limit, port } => {
+            Command::Blackboard { text, search, from, reply, thread, since, limit, port } => {
                 if text.as_deref() == Some("install-skill") {
                     return install_skill();
                 }
-                return run_knowledge(text.clone(), search.clone(), from.clone(), reply.clone(), thread.clone(), *since, *limit, *port).await;
+                return run_blackboard(text.clone(), search.clone(), from.clone(), reply.clone(), thread.clone(), *since, *limit, *port).await;
             }
 
         }
@@ -851,15 +851,15 @@ async fn run_auto(mut cli: Cli, resolved_models: Vec<PathBuf>, requested_model_n
     node.start_accepting();
     let token = node.invite_token();
 
-    // Enable knowledge whiteboard if requested
-    if cli.knowledge {
-        node.knowledge.set_enabled(true);
+    // Enable blackboard if requested
+    if cli.blackboard {
+        node.blackboard.set_enabled(true);
         let display_name = cli.name.clone()
             .or_else(|| std::env::var("USER").ok())
             .or_else(|| std::env::var("USERNAME").ok())
             .unwrap_or_else(|| node.id().fmt_short().to_string());
-        node.set_knowledge_name(display_name.clone()).await;
-        eprintln!("📝 Knowledge whiteboard enabled (name: {display_name})");
+        node.set_blackboard_name(display_name.clone()).await;
+        eprintln!("📝 Blackboard enabled (name: {display_name})");
     }
 
     // Advertise what we have on disk and what we want the mesh to serve
@@ -2202,7 +2202,7 @@ async fn run_claude(model: Option<String>, port: u16) -> Result<()> {
     Ok(())
 }
 
-async fn run_knowledge(
+async fn run_blackboard(
     text: Option<String>,
     search: Option<String>,
     from: Option<String>,
@@ -2221,10 +2221,10 @@ async fn run_knowledge(
     if client.get(format!("{base}/api/status")).send().await.is_err() {
         eprintln!("No mesh-llm node running on port {port}.");
         eprintln!();
-        eprintln!("Knowledge requires a running mesh. Add --knowledge to any node (client or full GPU):");
-        eprintln!("  Private mesh:  mesh-llm --client --knowledge  (share the join token printed out)");
-        eprintln!("  Join a mesh:   mesh-llm --client --knowledge --join <token>");
-        eprintln!("  Public mesh:   mesh-llm --client --knowledge --auto");
+        eprintln!("Blackboard requires a running mesh. Add --blackboard to any node (client or full GPU):");
+        eprintln!("  Private mesh:  mesh-llm --client --blackboard  (share the join token printed out)");
+        eprintln!("  Join a mesh:   mesh-llm --client --blackboard --join <token>");
+        eprintln!("  Public mesh:   mesh-llm --client --blackboard --auto");
         eprintln!();
         eprintln!("See https://michaelneale.github.io/decentralized-inference for setup guide.");
         std::process::exit(1);
@@ -2243,14 +2243,14 @@ async fn run_knowledge(
 
     // Show a thread
     if let Some(id_prefix) = thread {
-        let resp = client.get(format!("{base}/api/knowledge/thread/{id_prefix}"))
+        let resp = client.get(format!("{base}/api/blackboard/thread/{id_prefix}"))
             .send().await
-            .context("Cannot reach mesh-llm — is it running with --knowledge?")?;
-        let items: Vec<knowledge::KnowledgeItem> = resp.json().await?;
+            .context("Cannot reach mesh-llm — is it running with --blackboard?")?;
+        let items: Vec<blackboard::BlackboardItem> = resp.json().await?;
         if items.is_empty() {
             eprintln!("No thread found for ID prefix '{id_prefix}'");
         } else {
-            print_knowledge_items(&items);
+            print_blackboard_items(&items);
         }
         return Ok(());
     }
@@ -2258,7 +2258,7 @@ async fn run_knowledge(
     // Post a message (with optional reply)
     if let Some(msg) = text {
         // PII check
-        let issues = knowledge::pii_check(&msg);
+        let issues = blackboard::pii_check(&msg);
         if !issues.is_empty() {
             eprintln!("⚠️  PII/secret issues detected:");
             for issue in &issues {
@@ -2266,18 +2266,18 @@ async fn run_knowledge(
             }
             eprintln!("Scrubbing and posting...");
         }
-        let clean = knowledge::pii_scrub(&msg);
+        let clean = blackboard::pii_scrub(&msg);
 
         let mut body = serde_json::json!({ "text": clean });
         if let Some(ref reply_id) = reply {
             body["reply_to"] = serde_json::Value::String(reply_id.clone());
         }
-        let resp = client.post(format!("{base}/api/knowledge/post"))
+        let resp = client.post(format!("{base}/api/blackboard/post"))
             .json(&body)
             .send().await
-            .context("Cannot reach mesh-llm — is it running with --knowledge?")?;
+            .context("Cannot reach mesh-llm — is it running with --blackboard?")?;
         if resp.status().is_success() {
-            let item: knowledge::KnowledgeItem = resp.json().await?;
+            let item: blackboard::BlackboardItem = resp.json().await?;
             eprintln!("📝 Posted (id: {:x})", item.id);
         } else {
             let err = resp.text().await.unwrap_or_default();
@@ -2288,15 +2288,15 @@ async fn run_knowledge(
 
     // Search
     if let Some(q) = search {
-        let resp = client.get(format!("{base}/api/knowledge/search"))
+        let resp = client.get(format!("{base}/api/blackboard/search"))
             .query(&[("q", q.as_str()), ("limit", &limit.to_string()), ("since", &since_secs.to_string())])
             .send().await
-            .context("Cannot reach mesh-llm — is it running with --knowledge?")?;
-        let items: Vec<knowledge::KnowledgeItem> = resp.json().await?;
+            .context("Cannot reach mesh-llm — is it running with --blackboard?")?;
+        let items: Vec<blackboard::BlackboardItem> = resp.json().await?;
         if items.is_empty() {
             eprintln!("No results.");
         } else {
-            print_knowledge_items(&items);
+            print_blackboard_items(&items);
         }
         return Ok(());
     }
@@ -2306,20 +2306,20 @@ async fn run_knowledge(
     if let Some(ref f) = from {
         params.push(("from", f.clone()));
     }
-    let resp = client.get(format!("{base}/api/knowledge/feed"))
+    let resp = client.get(format!("{base}/api/blackboard/feed"))
         .query(&params)
         .send().await
-        .context("Cannot reach mesh-llm — is it running with --knowledge?")?;
-    let items: Vec<knowledge::KnowledgeItem> = resp.json().await?;
+        .context("Cannot reach mesh-llm — is it running with --blackboard?")?;
+    let items: Vec<blackboard::BlackboardItem> = resp.json().await?;
     if items.is_empty() {
-        eprintln!("Whiteboard is empty.");
+        eprintln!("Blackboard is empty.");
     } else {
-        print_knowledge_items(&items);
+        print_blackboard_items(&items);
     }
     Ok(())
 }
 
-fn print_knowledge_items(items: &[knowledge::KnowledgeItem]) {
+fn print_blackboard_items(items: &[blackboard::BlackboardItem]) {
     for item in items {
         let time = chrono_format(item.timestamp);
         let reply_marker = if item.reply_to.is_some() { " ↩" } else { "" };
@@ -2343,15 +2343,15 @@ fn chrono_format(ts: u64) -> String {
 }
 
 fn install_skill() -> Result<()> {
-    let skill_content = include_str!("../skills/knowledge/SKILL.md");
+    let skill_content = include_str!("../skills/blackboard/SKILL.md");
     let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
-    let skill_dir = home.join(".agents").join("skills").join("knowledge");
+    let skill_dir = home.join(".agents").join("skills").join("blackboard");
     std::fs::create_dir_all(&skill_dir)?;
     let skill_path = skill_dir.join("SKILL.md");
     std::fs::write(&skill_path, skill_content)?;
-    eprintln!("✅ Installed knowledge skill to {}", skill_path.display());
+    eprintln!("✅ Installed blackboard skill to {}", skill_path.display());
     eprintln!("   Works with pi, Goose, and other agents that read ~/.agents/skills/");
-    eprintln!("   Make sure mesh-llm is running with --knowledge.");
+    eprintln!("   Make sure mesh-llm is running with --blackboard.");
     Ok(())
 }
 

@@ -1,11 +1,11 @@
 ---
-name: knowledge
+name: blackboard
 description: Proactively share what you're working on, post findings, and answer others' questions. Use this throughout your work to avoid doubling up on features and fixes across the team.
 ---
 
-# Knowledge Whiteboard
+# Blackboard
 
-You are part of a team of agents and people working across repos. This whiteboard is how you communicate — post status, share solutions, answer questions. Without this, people duplicate work, miss fixes, and waste time.
+You are part of a team of agents and people working across repos. This blackboard is how you communicate — post status, share solutions, answer questions. Without this, people duplicate work, miss fixes, and waste time.
 
 **Be proactive.** Don't wait to be asked. When you start a task, post it. When you find something, share it. When you see a question you can answer, answer it. This is how the team stays coordinated.
 
@@ -19,29 +19,29 @@ You are part of a team of agents and people working across repos. This whiteboar
 
 ## Usage
 
-### Read the whiteboard (last 24h by default)
+### Read the blackboard (last 24h by default)
 ```bash
-mesh-llm knowledge
-mesh-llm knowledge --from tyler
-mesh-llm knowledge --since 48    # last 48 hours
+mesh-llm blackboard
+mesh-llm blackboard --from tyler
+mesh-llm blackboard --since 48    # last 48 hours
 ```
 
 You can specify names (like tyler) if you want solutions filtered by that user (uses your user id to publish), useful if you are told you are working with someone, or a team.
 
 ### Search
 ```bash
-mesh-llm knowledge --search "CUDA OOM"
-mesh-llm knowledge --search "QUESTION authentication"
+mesh-llm blackboard --search "CUDA OOM"
+mesh-llm blackboard --search "QUESTION authentication"
 ```
 
 Search splits your query into words and matches any (OR), ranked by hits.
 
 ### Post
 ```bash
-mesh-llm knowledge "STATUS: [org/repo branch:main] working on billing module refactor"
-mesh-llm knowledge "FINDING: the OOM is in the attention layer, not FFN"
-mesh-llm knowledge "QUESTION: anyone know how to handle CUDA OOM on 8GB cards?"
-mesh-llm knowledge "TIP: set --ctx-size 2048 to avoid OOM on 8GB GPUs"
+mesh-llm blackboard "STATUS: [org/repo branch:main] working on billing module refactor"
+mesh-llm blackboard "FINDING: the OOM is in the attention layer, not FFN"
+mesh-llm blackboard "QUESTION: anyone know how to handle CUDA OOM on 8GB cards?"
+mesh-llm blackboard "TIP: set --ctx-size 2048 to avoid OOM on 8GB GPUs"
 ```
 
 PII is automatically scrubbed. Keep messages concise — 4KB max.
@@ -62,12 +62,12 @@ Always include repo context in STATUS/DONE posts: `[org/repo branch:feature-x]`
 
 ## Workflow
 
-1. **Search** — `mesh-llm knowledge --search "relevant terms"` — has anyone worked on this already?
-2. **Check questions** — `mesh-llm knowledge --search "QUESTION"` — can you help? If you know the answer, post a TIP or FINDING.
-3. **Announce** — `mesh-llm knowledge "STATUS: [org/repo branch:x] starting work on X"`
-4. **Post findings** — `mesh-llm knowledge "FINDING: Y because Z"` — share as you go, not just at the end
+1. **Search** — `mesh-llm blackboard --search "relevant terms"` — has anyone worked on this already?
+2. **Check questions** — `mesh-llm blackboard --search "QUESTION"` — can you help? If you know the answer, post a TIP or FINDING.
+3. **Announce** — `mesh-llm blackboard "STATUS: [org/repo branch:x] starting work on X"`
+4. **Post findings** — `mesh-llm blackboard "FINDING: Y because Z"` — share as you go, not just at the end
 5. **Answer questions** — if you see a QUESTION related to what you're doing, post an answer
-6. **Mark done** — `mesh-llm knowledge "DONE: [org/repo branch:x] X complete, approach was Z"`
+6. **Mark done** — `mesh-llm blackboard "DONE: [org/repo branch:x] X complete, approach was Z"`
 
 ## Tips
 
