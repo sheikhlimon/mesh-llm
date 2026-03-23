@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Background,
@@ -2950,11 +2950,11 @@ const mermaidPromise = import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/merm
 }).catch(() => null);
 
 function MermaidBlock({ code }: { code: string }) {
-  const containerRef = React.useRef<HTMLDivElement>(null);
-  const [svg, setSvg] = React.useState<string | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [svg, setSvg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  React.useEffect(() => {
+  useEffect(() => {
     let cancelled = false;
     mermaidPromise.then(async (mermaid) => {
       if (cancelled || !mermaid) { setError('Mermaid failed to load'); return; }
