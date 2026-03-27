@@ -8,7 +8,12 @@ point a plugin config entry at the resulting binary.
 ## What it demonstrates
 
 - `InitializeRequest` / `InitializeResponse`
-- MCP-style `tools/list` and `tools/call` RPC handling
+- MCP-style `tools/*` RPC handling
+- MCP-style `prompts/*` RPC handling
+- MCP-style `resources/*` and `resources/templates/list` RPC handling
+- MCP-style `completion/complete` RPC handling
+- MCP-style `logging/setLevel` RPC handling
+- MCP-style `tasks/*` RPC handling
 - outbound and inbound `ChannelMessage` traffic
 - outbound and inbound `BulkTransferMessage` traffic
 - inbound `MeshEvent` delivery

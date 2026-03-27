@@ -2,14 +2,25 @@ use anyhow::Result;
 use mesh_llm_plugin::{
     Plugin, PluginContext, PluginResult, PluginRuntime, ToolCallRequest, async_trait,
     bulk_transfer_message, channel_message, empty_object_schema, json_bytes, json_schema_tool,
-    json_string, list_tools, parse_optional_json, plugin_server_info, proto,
-    structured_tool_result, tool_error, tool_with_schema,
+    json_string, list_prompts, list_resource_templates, list_resources, list_tasks, list_tools,
+    parse_optional_json, prompt, prompt_argument, proto, read_resource_result,
+    structured_tool_result, task, tool_error, tool_with_schema,
+    complete_result, get_prompt_result, get_task_payload_result, get_task_result,
+    cancel_task_result,
 };
-use rmcp::model::{CallToolResult, ListToolsResult, ServerInfo};
+use rmcp::model::{
+    CallToolResult, CancelTaskParams, CancelTaskResult, CompleteRequestParams, CompleteResult,
+    GetPromptRequestParams, GetPromptResult, GetTaskInfoParams, GetTaskPayloadResult,
+    GetTaskResult, GetTaskResultParams, ListPromptsResult, ListResourceTemplatesResult,
+    ListResourcesResult, ListTasksResult, ListToolsResult, LoggingLevel, PaginatedRequestParams,
+    ReadResourceRequestParams, ReadResourceResult, ServerCapabilities, ServerInfo, SetLevelRequestParams,
+    SubscribeRequestParams, Task, TaskStatus, PromptMessage, PromptMessageRole,
+    UnsubscribeRequestParams, AnnotateAble, RawResource, RawResourceTemplate,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -118,7 +129,6 @@ struct TransferAccumulator {
     bytes: Vec<u8>,
 }
 
-#[derive(Default)]
 struct ExampleState {
     local_peer_id: String,
     mesh_id: String,
@@ -131,6 +141,15 @@ struct ExampleState {
     sent_channel_messages: usize,
     sent_bulk_transfers: usize,
     next_id: u64,
+    subscriptions: BTreeSet<String>,
+    log_level: LoggingLevel,
+    tasks: BTreeMap<String, ExampleTask>,
+}
+
+#[derive(Clone)]
+struct ExampleTask {
+    task: Task,
+    payload: serde_json::Value,
 }
 
 impl ExampleState {
@@ -165,6 +184,13 @@ impl ExampleState {
             "recent_channel_messages": recent_items(&self.channel_messages, limit),
             "recent_bulk_events": recent_items(&self.bulk_events, limit),
             "completed_transfers": recent_items(&completed_transfers, limit),
+            "subscriptions": self.subscriptions.iter().cloned().collect::<Vec<_>>(),
+            "log_level": format!("{:?}", self.log_level).to_lowercase(),
+            "tasks": self.tasks.values().map(|task| json!({
+                "task_id": task.task.task_id,
+                "status": task_status_name(&task.task.status),
+                "status_message": task.task.status_message,
+            })).collect::<Vec<_>>(),
         })
     }
 
@@ -310,10 +336,67 @@ impl ExampleState {
             _ => {}
         }
     }
+
+    fn resource_snapshot(&self) -> serde_json::Value {
+        json!({
+            "plugin": PLUGIN_ID,
+            "channel": EXAMPLE_CHANNEL,
+            "local_peer_id": self.local_peer_id,
+            "mesh_id": self.mesh_id,
+            "log_level": format!("{:?}", self.log_level).to_lowercase(),
+            "subscriptions": self.subscriptions.iter().cloned().collect::<Vec<_>>(),
+        })
+    }
 }
 
 struct ExamplePlugin {
     state: Arc<Mutex<ExampleState>>,
+}
+
+impl Default for ExampleState {
+    fn default() -> Self {
+        let bootstrap_task = example_task(
+            "example-bootstrap",
+            TaskStatus::Completed,
+            "Bootstrap complete",
+            json!({
+                "ok": true,
+                "task": "bootstrap",
+                "plugin": PLUGIN_ID,
+            }),
+        );
+        let long_running_task = example_task(
+            "example-watch",
+            TaskStatus::Working,
+            "Watching mesh events",
+            json!({
+                "ok": true,
+                "task": "watch",
+                "state": "working",
+            }),
+        );
+
+        let mut tasks = BTreeMap::new();
+        tasks.insert(bootstrap_task.task.task_id.clone(), bootstrap_task);
+        tasks.insert(long_running_task.task.task_id.clone(), long_running_task);
+
+        Self {
+            local_peer_id: String::new(),
+            mesh_id: String::new(),
+            known_peers: BTreeMap::new(),
+            mesh_events: Vec::new(),
+            channel_messages: Vec::new(),
+            bulk_events: Vec::new(),
+            completed_transfers: BTreeMap::new(),
+            transfer_state: HashMap::new(),
+            sent_channel_messages: 0,
+            sent_bulk_transfers: 0,
+            next_id: 0,
+            subscriptions: BTreeSet::new(),
+            log_level: LoggingLevel::Info,
+            tasks,
+        }
+    }
 }
 
 #[async_trait]
@@ -362,6 +445,138 @@ impl Plugin for ExamplePlugin {
         context: &mut PluginContext<'_>,
     ) -> PluginResult<Option<CallToolResult>> {
         Ok(Some(handle_tool_call(&self.state, context, request).await?))
+    }
+
+    async fn list_prompts(
+        &mut self,
+        _request: Option<PaginatedRequestParams>,
+        _context: &mut PluginContext<'_>,
+    ) -> PluginResult<Option<ListPromptsResult>> {
+        Ok(Some(list_prompts_result()))
+    }
+
+    async fn get_prompt(
+        &mut self,
+        request: GetPromptRequestParams,
+        _context: &mut PluginContext<'_>,
+    ) -> PluginResult<Option<GetPromptResult>> {
+        Ok(Some(get_example_prompt(&self.state, request).await?))
+    }
+
+    async fn list_resources(
+        &mut self,
+        _request: Option<PaginatedRequestParams>,
+        _context: &mut PluginContext<'_>,
+    ) -> PluginResult<Option<ListResourcesResult>> {
+        Ok(Some(list_resources_result()))
+    }
+
+    async fn read_resource(
+        &mut self,
+        request: ReadResourceRequestParams,
+        _context: &mut PluginContext<'_>,
+    ) -> PluginResult<Option<ReadResourceResult>> {
+        Ok(Some(read_example_resource(&self.state, request).await?))
+    }
+
+    async fn list_resource_templates(
+        &mut self,
+        _request: Option<PaginatedRequestParams>,
+        _context: &mut PluginContext<'_>,
+    ) -> PluginResult<Option<ListResourceTemplatesResult>> {
+        Ok(Some(list_resource_templates_result()))
+    }
+
+    async fn subscribe_resource(
+        &mut self,
+        request: SubscribeRequestParams,
+        _context: &mut PluginContext<'_>,
+    ) -> PluginResult<Option<()>> {
+        self.state.lock().await.subscriptions.insert(request.uri);
+        Ok(Some(()))
+    }
+
+    async fn unsubscribe_resource(
+        &mut self,
+        request: UnsubscribeRequestParams,
+        _context: &mut PluginContext<'_>,
+    ) -> PluginResult<Option<()>> {
+        self.state.lock().await.subscriptions.remove(&request.uri);
+        Ok(Some(()))
+    }
+
+    async fn complete(
+        &mut self,
+        request: CompleteRequestParams,
+        _context: &mut PluginContext<'_>,
+    ) -> PluginResult<Option<CompleteResult>> {
+        Ok(Some(complete_example(request)?))
+    }
+
+    async fn set_log_level(
+        &mut self,
+        request: SetLevelRequestParams,
+        _context: &mut PluginContext<'_>,
+    ) -> PluginResult<Option<()>> {
+        self.state.lock().await.log_level = request.level;
+        Ok(Some(()))
+    }
+
+    async fn list_tasks(
+        &mut self,
+        _request: Option<PaginatedRequestParams>,
+        _context: &mut PluginContext<'_>,
+    ) -> PluginResult<Option<ListTasksResult>> {
+        let state = self.state.lock().await;
+        Ok(Some(list_tasks(
+            state.tasks.values().map(|task| task.task.clone()).collect(),
+        )))
+    }
+
+    async fn get_task_info(
+        &mut self,
+        request: GetTaskInfoParams,
+        _context: &mut PluginContext<'_>,
+    ) -> PluginResult<Option<GetTaskResult>> {
+        let state = self.state.lock().await;
+        let task = state
+            .tasks
+            .get(&request.task_id)
+            .ok_or_else(|| mesh_llm_plugin::PluginError::invalid_params(format!("Unknown task '{}'", request.task_id)))?;
+        Ok(Some(get_task_result(task.task.clone())))
+    }
+
+    async fn get_task_result(
+        &mut self,
+        request: GetTaskResultParams,
+        _context: &mut PluginContext<'_>,
+    ) -> PluginResult<Option<GetTaskPayloadResult>> {
+        let state = self.state.lock().await;
+        let task = state
+            .tasks
+            .get(&request.task_id)
+            .ok_or_else(|| mesh_llm_plugin::PluginError::invalid_params(format!("Unknown task '{}'", request.task_id)))?;
+        Ok(Some(get_task_payload_result(task.payload.clone())?))
+    }
+
+    async fn cancel_task(
+        &mut self,
+        request: CancelTaskParams,
+        _context: &mut PluginContext<'_>,
+    ) -> PluginResult<Option<CancelTaskResult>> {
+        let mut state = self.state.lock().await;
+        let task = state
+            .tasks
+            .get_mut(&request.task_id)
+            .ok_or_else(|| mesh_llm_plugin::PluginError::invalid_params(format!("Unknown task '{}'", request.task_id)))?;
+        task.task.status = TaskStatus::Cancelled;
+        task.task.status_message = Some("Cancelled by MCP client".into());
+        task.payload = json!({
+            "ok": false,
+            "cancelled": true,
+            "task_id": task.task.task_id,
+        });
+        Ok(Some(cancel_task_result(task.task.clone())))
     }
 
     async fn on_channel_message(
@@ -585,12 +800,24 @@ async fn handle_tool_call(
 }
 
 fn server_info() -> ServerInfo {
-    plugin_server_info(
-        PLUGIN_ID,
-        env!("CARGO_PKG_VERSION"),
-        "Plugin Surface Example",
-        "Standalone example plugin that exercises tools, channel messages, bulk transfers, and mesh events.",
-        None::<String>,
+    let capabilities = ServerCapabilities::builder()
+        .enable_tools()
+        .enable_tool_list_changed()
+        .enable_prompts()
+        .enable_prompts_list_changed()
+        .enable_resources()
+        .enable_resources_list_changed()
+        .enable_resources_subscribe()
+        .enable_completions()
+        .enable_logging()
+        .enable_tasks()
+        .build();
+    ServerInfo::new(capabilities).with_server_info(
+        rmcp::model::Implementation::new(PLUGIN_ID, env!("CARGO_PKG_VERSION"))
+            .with_title("Plugin Surface Example")
+            .with_description(
+                "Standalone example plugin that exercises tools, prompts, resources, completion, logging, tasks, channel messages, bulk transfers, and mesh events.",
+            ),
     )
 }
 
@@ -623,6 +850,182 @@ fn list_tools_result() -> ListToolsResult {
             empty_object_schema(),
         ),
     ])
+}
+
+fn list_prompts_result() -> ListPromptsResult {
+    list_prompts(vec![
+        prompt(
+            "status_brief",
+            "Create a short status brief summarizing the current example plugin state.",
+            Some(vec![
+                prompt_argument("topic", "Topic to emphasize in the brief.", false),
+                prompt_argument("audience", "Target audience for the brief.", false),
+            ]),
+        ),
+        prompt(
+            "peer_focus",
+            "Summarize a specific peer from the current example state.",
+            Some(vec![prompt_argument("peer_id", "Peer ID to focus on.", true)]),
+        ),
+    ])
+}
+
+async fn get_example_prompt(
+    state: &Arc<Mutex<ExampleState>>,
+    request: GetPromptRequestParams,
+) -> PluginResult<GetPromptResult> {
+    let args = request.arguments.unwrap_or_default();
+    let state = state.lock().await;
+    let snapshot = state.snapshot(5).to_string();
+    let result = match request.name.as_str() {
+        "status_brief" => {
+            let topic = args.get("topic").and_then(|v| v.as_str()).unwrap_or("mesh health");
+            let audience = args.get("audience").and_then(|v| v.as_str()).unwrap_or("operators");
+            get_prompt_result(vec![
+                PromptMessage::new_text(
+                    PromptMessageRole::User,
+                    format!(
+                        "Write a concise status brief for {audience}. Focus on {topic}."
+                    ),
+                ),
+                PromptMessage::new_text(PromptMessageRole::User, snapshot),
+            ])
+        }
+        "peer_focus" => {
+            let peer_id = args
+                .get("peer_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let peer = state
+                .known_peers
+                .get(peer_id)
+                .map(|peer| serde_json::to_string(peer).unwrap_or_else(|_| "{}".into()))
+                .unwrap_or_else(|| "{\"missing\":true}".into());
+            get_prompt_result(vec![
+                PromptMessage::new_text(
+                    PromptMessageRole::User,
+                    format!("Summarize peer {peer_id} and its current role in the mesh."),
+                ),
+                PromptMessage::new_text(PromptMessageRole::User, peer),
+            ])
+        }
+        other => {
+            return Err(mesh_llm_plugin::PluginError::invalid_params(format!(
+                "Unknown prompt '{other}'"
+            )))
+        }
+    };
+    Ok(result)
+}
+
+fn list_resources_result() -> ListResourcesResult {
+    list_resources(vec![
+        RawResource::new("example://snapshot", "Example Snapshot")
+            .with_description("Current high-level example plugin snapshot.")
+            .no_annotation(),
+        RawResource::new("example://peers", "Known Peers")
+            .with_description("Current peer inventory seen by the example plugin.")
+            .no_annotation(),
+    ])
+}
+
+fn list_resource_templates_result() -> ListResourceTemplatesResult {
+    list_resource_templates(vec![
+        RawResourceTemplate::new("example://peer/{peer_id}", "Peer Detail")
+            .with_description("Dynamic resource for a specific peer.")
+            .with_mime_type("application/json")
+            .no_annotation(),
+    ])
+}
+
+async fn read_example_resource(
+    state: &Arc<Mutex<ExampleState>>,
+    request: ReadResourceRequestParams,
+) -> PluginResult<ReadResourceResult> {
+    let state = state.lock().await;
+    let contents = match request.uri.as_str() {
+        "example://snapshot" => vec![rmcp::model::ResourceContents::text(
+            state.resource_snapshot().to_string(),
+            request.uri,
+        )
+        .with_mime_type("application/json")],
+        "example://peers" => vec![rmcp::model::ResourceContents::text(
+            serde_json::to_string(&state.known_peers.values().cloned().collect::<Vec<_>>())
+                .map_err(|err| mesh_llm_plugin::PluginError::internal(err.to_string()))?,
+            request.uri,
+        )
+        .with_mime_type("application/json")],
+        uri if uri.starts_with("example://peer/") => {
+            let peer_id = uri.trim_start_matches("example://peer/");
+            let payload = state
+                .known_peers
+                .get(peer_id)
+                .map(|peer| serde_json::to_string(peer).unwrap_or_else(|_| "{}".into()))
+                .unwrap_or_else(|| "{\"missing\":true}".into());
+            vec![rmcp::model::ResourceContents::text(payload, uri.to_string())
+                .with_mime_type("application/json")]
+        }
+        other => {
+            return Err(mesh_llm_plugin::PluginError::invalid_params(format!(
+                "Unknown resource '{other}'"
+            )))
+        }
+    };
+    Ok(read_resource_result(contents))
+}
+
+fn complete_example(request: CompleteRequestParams) -> PluginResult<CompleteResult> {
+    let values = if let Some(prompt_name) = request.r#ref.as_prompt_name() {
+        match (prompt_name, request.argument.name.as_str()) {
+            ("status_brief", "topic") => vec![
+                "mesh health".into(),
+                "plugin runtime".into(),
+                "bulk transfers".into(),
+            ],
+            ("status_brief", "audience") => vec![
+                "operators".into(),
+                "developers".into(),
+                "testers".into(),
+            ],
+            ("peer_focus", "peer_id") => vec!["peer-alpha".into(), "peer-beta".into()],
+            _ => vec![request.argument.value],
+        }
+    } else if let Some(resource_uri) = request.r#ref.as_resource_uri() {
+        match resource_uri {
+            "example://peer/{peer_id}" => vec!["peer-alpha".into(), "peer-beta".into()],
+            _ => vec![request.argument.value],
+        }
+    } else {
+        vec![request.argument.value]
+    };
+    complete_result(values)
+}
+
+fn example_task(
+    id: &str,
+    status: TaskStatus,
+    status_message: &str,
+    payload: serde_json::Value,
+) -> ExampleTask {
+    let task = task(
+        id,
+        status,
+        "2026-01-01T00:00:00Z",
+        "2026-01-01T00:00:00Z",
+    )
+    .with_status_message(status_message)
+    .with_poll_interval(1000);
+    ExampleTask { task, payload }
+}
+
+fn task_status_name(status: &TaskStatus) -> &'static str {
+    match status {
+        TaskStatus::Working => "working",
+        TaskStatus::InputRequired => "input_required",
+        TaskStatus::Completed => "completed",
+        TaskStatus::Failed => "failed",
+        TaskStatus::Cancelled => "cancelled",
+    }
 }
 
 fn should_ack_channel(message: &proto::ChannelMessage) -> bool {
