@@ -2454,7 +2454,7 @@ function DashboardPage({
         </CardHeader>
         <CardContent className="min-h-0 pt-0">
           {peerRows.length > 0 ? (
-            <ScrollArea horizontal className="max-h-[18rem] pr-3 md:max-h-[20rem]">
+            <ScrollArea horizontal className="h-[18rem] pr-3 md:h-[20rem]">
               <Table className="min-w-[920px]">
                 <TableHeader>
                   <TableRow>
