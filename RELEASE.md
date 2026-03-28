@@ -21,10 +21,10 @@ On macOS, this clones/updates the llama.cpp fork if needed, builds with `-DGGML_
 On Windows, use the release-specific recipes directly:
 
 ```powershell
-just release-build
-just release-build-cuda
-just release-build-amd
-just release-build-vulkan
+just release-build-windows
+just release-build-cuda-windows
+just release-build-amd-windows
+just release-build-vulkan-windows
 ```
 
 ### 2. Verify no homebrew dependencies
@@ -56,10 +56,10 @@ Bundle naming now follows the same convention everywhere:
 On Windows, create release archives directly:
 
 ```powershell
-just release-bundle v0.X.0
-just release-bundle-cuda v0.X.0
-just release-bundle-amd v0.X.0
-just release-bundle-vulkan v0.X.0
+just release-bundle-windows v0.X.0
+just release-bundle-cuda-windows v0.X.0
+just release-bundle-amd-windows v0.X.0
+just release-bundle-vulkan-windows v0.X.0
 ```
 
 Those commands emit `.zip` assets in `dist/` with `mesh-llm.exe`, plus flavor-specific `rpc-server-<flavor>.exe` and `llama-server-<flavor>.exe`.
@@ -122,7 +122,7 @@ After the workflow finishes, verify:
 - The unversioned asset name `mesh-bundle.tar.gz` is still kept for compatibility with direct archive installs.
 - The default Linux release bundle is a generic CPU build.
 - Windows source builds exist, and tagged releases now publish Windows CPU/CUDA/ROCm/Vulkan `.zip` assets.
-- Windows release artifacts can still be generated locally with `just release-build*` and `just release-bundle*`.
+- Windows release artifacts can still be generated locally with the `*-windows` release recipes in `Justfile`.
 - Release bundles use flavor-specific `rpc-server-<flavor>` and `llama-server-<flavor>` names so multiple flavors can coexist in one install directory. Use `mesh-llm --llama-flavor <flavor>` to force a specific pair.
 - The CUDA Linux release bundle is built in CI with an explicit multi-arch `CMAKE_CUDA_ARCHITECTURES` list and is not runtime-tested during the workflow.
 - The ROCm and Vulkan Linux release bundles are compile-tested in CI, but not runtime-tested against real GPUs during the workflow.

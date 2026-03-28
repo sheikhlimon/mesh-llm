@@ -70,32 +70,28 @@ build-linux backend="" cuda_arch="" rocm_arch="":
 release-build:
     @scripts/build-release.sh
 
-[windows]
-release-build:
+release-build-windows:
     @powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows.ps1 -Backend cpu
 
 # Build a Linux CUDA release artifact with an explicit architecture list.
 release-build-cuda cuda_arch="75;80;86;89;90;120":
     @scripts/build-linux.sh --backend cuda --cuda-arch "{{ cuda_arch }}"
 
-[windows]
-release-build-cuda cuda_arch="75;80;86;89;90;120":
+release-build-cuda-windows cuda_arch="75;80;86;89;90;120":
     @powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows.ps1 -Backend cuda -CudaArch "{{cuda_arch}}"
 
 # Build a Linux AMD ROCm release artifact with an explicit architecture list.
 release-build-amd amd_arch="gfx90a;gfx942;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201":
     @scripts/build-linux-amd.sh "{{ amd_arch }}"
 
-[windows]
-release-build-amd amd_arch="gfx90a;gfx942;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201":
+release-build-amd-windows amd_arch="gfx90a;gfx942;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201":
     @powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows.ps1 -Backend rocm -RocmArch "{{amd_arch}}"
 
 # Build a Linux Vulkan release artifact.
 release-build-vulkan:
     @scripts/build-linux.sh --backend vulkan
 
-[windows]
-release-build-vulkan:
+release-build-vulkan-windows:
     @powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows.ps1 -Backend vulkan
 
 # Bump release version consistently across source and Cargo manifests.
@@ -223,32 +219,28 @@ bundle output="/tmp/mesh-bundle.tar.gz":
 release-bundle version output="dist":
     @scripts/package-release.sh "{{ version }}" "{{ output }}"
 
-[windows]
-release-bundle version output="dist":
+release-bundle-windows version output="dist":
     @powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1 -Version "{{version}}" -OutputDir "{{output}}"
 
 # Create Linux CUDA release archive(s).
 release-bundle-cuda version output="dist":
     MESH_RELEASE_FLAVOR=cuda scripts/package-release.sh "{{ version }}" "{{ output }}"
 
-[windows]
-release-bundle-cuda version output="dist":
+release-bundle-cuda-windows version output="dist":
     @powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1 -Version "{{version}}" -OutputDir "{{output}}" -Flavor cuda
 
 # Create Linux AMD ROCm release archive(s).
 release-bundle-amd version output="dist":
     MESH_RELEASE_FLAVOR=rocm scripts/package-release.sh "{{ version }}" "{{ output }}"
 
-[windows]
-release-bundle-amd version output="dist":
+release-bundle-amd-windows version output="dist":
     @powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1 -Version "{{version}}" -OutputDir "{{output}}" -Flavor rocm
 
 # Create Linux Vulkan release archive(s).
 release-bundle-vulkan version output="dist":
     MESH_RELEASE_FLAVOR=vulkan scripts/package-release.sh "{{ version }}" "{{ output }}"
 
-[windows]
-release-bundle-vulkan version output="dist":
+release-bundle-vulkan-windows version output="dist":
     @powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1 -Version "{{version}}" -OutputDir "{{output}}" -Flavor vulkan
 
 # Run the UI with Vite HMR and proxy /api to mesh-llm (default: http://127.0.0.1:3131)

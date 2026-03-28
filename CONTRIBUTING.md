@@ -75,11 +75,11 @@ just build backend=cpu
 just build backend=cuda cuda_arch=90
 ```
 
-Windows release bundles use the same flavor-specific recipes as Linux:
+Windows release bundles use dedicated Windows release recipes:
 
 ```powershell
-just release-build-cuda
-just release-bundle-cuda v0.X.0
+just release-build-cuda-windows
+just release-bundle-cuda-windows v0.X.0
 ```
 
 GitHub Actions uses hosted `windows-2022` runners for compile-only Windows CI and release packaging. The workflow installs CUDA, HIP SDK, and Vulkan SDK on demand before invoking the same `just` recipes.
