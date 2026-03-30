@@ -445,6 +445,72 @@ fn extract_zip_archive(archive: &Path, extracted: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::io::Write;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use zip::write::FileOptions;
+    use zip::CompressionMethod;
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("{}_{}", prefix, nanos));
+        // Best-effort cleanup in case something is left behind from a previous run.
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("failed to create temporary directory");
+        dir
+    }
+
+    #[test]
+    fn extract_zip_archive_strips_top_level_directory() -> Result<()> {
+        let base_dir = unique_temp_dir("mesh_llm_extract_zip_test");
+        let archive_path = base_dir.join("bundle.zip");
+        let extracted_dir = base_dir.join("extracted");
+        fs::create_dir_all(&extracted_dir)?;
+
+        // Create a ZIP with a single top-level directory, similar to the release packager.
+        let file = std::fs::File::create(&archive_path)
+            .with_context(|| format!("Failed to create test archive {}", archive_path.display()))?;
+        let mut writer = zip::ZipWriter::new(file);
+        let options = FileOptions::default().compression_method(CompressionMethod::Stored);
+
+        // Top-level directory.
+        writer.add_directory("bundle-1.0.0/", options)?;
+        // Nested directory and file under the top-level directory.
+        writer.add_directory("bundle-1.0.0/bin/", options)?;
+        writer.start_file("bundle-1.0.0/bin/server", options)?;
+        writer.write_all(b"dummy-server")?;
+
+        writer
+            .finish()
+            .with_context(|| "Failed to finalize test ZIP archive")?;
+
+        // Now extract and verify that the top-level directory is stripped.
+        extract_zip_archive(&archive_path, &extracted_dir)?;
+
+        let server_path = extracted_dir.join("bin").join("server");
+        anyhow::ensure!(
+            server_path.is_file(),
+            "Expected extracted server file at {}",
+            server_path.display()
+        );
+
+        let top_level = extracted_dir.join("bundle-1.0.0");
+        anyhow::ensure!(
+            !top_level.exists(),
+            "Top-level directory should have been stripped, but {} exists",
+            top_level.display()
+        );
+
+        Ok(())
+    }
+}
 fn collect_bundle_files(
     extracted: &Path,
     expected_flavor: launch::BinaryFlavor,
