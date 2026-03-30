@@ -331,8 +331,18 @@ fn bundle_install_dir(
     requested_flavor: Option<launch::BinaryFlavor>,
 ) -> Option<(PathBuf, launch::BinaryFlavor)> {
     let dir = exe.parent()?;
-    if exe.file_name()?.to_str()? != mesh_binary_name() {
-        return None;
+    let file_name = exe.file_name()?.to_str()?;
+    #[cfg(windows)]
+    {
+        if !file_name.eq_ignore_ascii_case(mesh_binary_name()) {
+            return None;
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        if file_name != mesh_binary_name() {
+            return None;
+        }
     }
     let flavor = installed_bundle_flavor(dir, requested_flavor)?;
     Some((dir.to_path_buf(), flavor))
