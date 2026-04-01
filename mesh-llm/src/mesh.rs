@@ -4021,6 +4021,7 @@ pub(crate) mod tests {
             model_source: Arc::new(Mutex::new(None)),
             serving: Arc::new(Mutex::new(None)),
             serving_models: Arc::new(Mutex::new(Vec::new())),
+            served_model_descriptors: Arc::new(Mutex::new(Vec::new())),
             llama_ready: Arc::new(Mutex::new(false)),
             available_models: Arc::new(Mutex::new(Vec::new())),
             requested_models: Arc::new(Mutex::new(Vec::new())),
@@ -6604,6 +6605,7 @@ pub(crate) mod tests {
             experts_summary: None,
             tunnel_port: None,
             available_model_sizes: HashMap::new(),
+            served_model_descriptors: vec![],
         }
     }
 
