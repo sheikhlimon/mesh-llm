@@ -28,10 +28,12 @@ import {
   Check,
   Copy,
   Cpu,
+  FolderTree,
   Gauge,
   Gpu,
   Hash,
   ImagePlus,
+  Info,
   Laptop,
   Loader2,
   MessageSquarePlus,
@@ -4572,20 +4574,8 @@ function ModelSidebar({
   model: MeshModel;
   activePeers: ActivePeerRow[];
 }) {
-  const [copiedRef, setCopiedRef] = useState(false);
   const fullFileName = modelFullFileName(model);
   const revisionFileName = modelRevisionFileName(model);
-
-  const copySourceRef = useCallback(async () => {
-    if (!model.source_ref) return;
-    try {
-      await navigator.clipboard.writeText(model.source_ref);
-      setCopiedRef(true);
-      window.setTimeout(() => setCopiedRef(false), 1500);
-    } catch {
-      setCopiedRef(false);
-    }
-  }, [model.source_ref]);
 
   return (
     <div className="flex min-h-full flex-col">
@@ -4598,7 +4588,7 @@ function ModelSidebar({
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <SheetTitle className="text-lg font-semibold leading-tight tracking-tight [overflow-wrap:anywhere] sm:text-xl">
-                  {shortName(model.name)}
+                  {model.name}
                 </SheetTitle>
                 <StatusPill
                   label={
@@ -4625,37 +4615,9 @@ function ModelSidebar({
                   tooltip={fitLabelTooltip(model.fit_label ?? 'Unknown')}
                 />
               </div>
-              {model.source_page_url ? (
-                <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                  <a
-                    href={model.source_page_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 underline-offset-4 hover:text-foreground hover:underline [overflow-wrap:anywhere]"
-                  >
-                    <span aria-hidden="true">🤗</span>
-                    <span>{huggingFacePathFromUrl(model.source_page_url) ?? model.name}</span>
-                    <ExternalLink className="h-3 w-3 shrink-0" />
-                  </a>
-                  {model.source_ref ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      className="h-6 w-6 rounded-full p-0 text-muted-foreground hover:text-foreground"
-                      onClick={copySourceRef}
-                      aria-label={copiedRef ? 'Repository reference copied' : 'Copy repository reference'}
-                      title={copiedRef ? 'Copied' : 'Copy repository reference'}
-                    >
-                      {copiedRef ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                    </Button>
-                  ) : null}
-                </div>
-              ) : (
-                <SheetDescription className="mt-1.5 text-sm text-muted-foreground [overflow-wrap:anywhere]">
-                  {model.name}
-                </SheetDescription>
-              )}
+              <SheetDescription className="mt-1.5 text-sm text-muted-foreground [overflow-wrap:anywhere]">
+                {model.name}
+              </SheetDescription>
             </div>
           </div>
         </SheetHeader>
@@ -4693,7 +4655,10 @@ function ModelSidebar({
 
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Capabilities</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Sparkles className="h-4 w-4 text-muted-foreground" />
+              <span>Capabilities</span>
+            </CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
             <div className="flex flex-wrap gap-2">
@@ -4744,18 +4709,62 @@ function ModelSidebar({
           || model.used_expert_count) ? (
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Model Details</CardTitle>
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <Info className="h-4 w-4 text-muted-foreground" />
+                <span>Model Details</span>
+              </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
               {model.description ? <p className="leading-7 text-muted-foreground">{model.description}</p> : null}
               <div className="grid gap-3 sm:grid-cols-2">
-                {model.architecture ? <ModelMetaItem label="Architecture" value={model.architecture} /> : null}
-                {model.quantization ? <ModelMetaItem label="Quantization" value={model.quantization} /> : null}
-                {model.draft_model ? <ModelMetaItem label="Draft Pair" value={model.draft_model} /> : null}
-                {model.moe && model.expert_count && model.used_expert_count ? (
-                  <ModelMetaItem label="MoE Topology" value={`${model.expert_count} experts · top-${model.used_expert_count}`} />
+                {model.architecture ? (
+                  <ModelMetaItem
+                    label="Architecture"
+                    value={model.architecture}
+                    icon={<Cpu className="h-3.5 w-3.5" />}
+                  />
                 ) : null}
-                {model.source_ref ? <ModelMetaItem label="Source" value={model.source_ref} /> : null}
+                {model.quantization ? (
+                  <ModelMetaItem
+                    label="Quantization"
+                    value={model.quantization}
+                    icon={<Gauge className="h-3.5 w-3.5" />}
+                  />
+                ) : null}
+                {model.draft_model ? (
+                  <ModelMetaItem
+                    label="Draft Pair"
+                    value={model.draft_model}
+                    icon={<Sparkles className="h-3.5 w-3.5" />}
+                  />
+                ) : null}
+                {model.moe && model.expert_count && model.used_expert_count ? (
+                  <ModelMetaItem
+                    label="MoE Topology"
+                    value={`${model.expert_count} experts · top-${model.used_expert_count}`}
+                    icon={<Boxes className="h-3.5 w-3.5" />}
+                  />
+                ) : null}
+                {model.source_page_url ? (
+                  <ModelMetaLinkItem
+                    label="Model Source"
+                    href={model.source_page_url}
+                    text={huggingFacePathFromUrl(model.source_page_url) ?? model.source_ref ?? model.name}
+                    icon={
+                      isHuggingFaceUrl(model.source_page_url) ? (
+                        <span aria-hidden="true" className="text-sm leading-none">🤗</span>
+                      ) : (
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      )
+                    }
+                  />
+                ) : model.source_ref ? (
+                  <ModelMetaItem
+                    label="Model Source"
+                    value={model.source_ref}
+                    icon={<ExternalLink className="h-3.5 w-3.5" />}
+                  />
+                ) : null}
               </div>
             </CardContent>
           </Card>
@@ -4764,9 +4773,15 @@ function ModelSidebar({
         {(model.name || fullFileName || revisionFileName) ? (
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Model Files</CardTitle>
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <FolderTree className="h-4 w-4 text-muted-foreground" />
+                <span>Model Files</span>
+              </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
+              <p className="text-sm leading-6 text-muted-foreground">
+                The same model file shown as the mesh shorthand, repository path, and pinned revision.
+              </p>
               <div className="grid gap-3">
                 <ModelMetaItem label="Shorthand" value={model.name} copyValue={model.name} />
                 {fullFileName ? (
@@ -4783,7 +4798,10 @@ function ModelSidebar({
         {activePeers.length > 0 ? (
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Active Peers</CardTitle>
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <Network className="h-4 w-4 text-muted-foreground" />
+                <span>Active Peers</span>
+              </CardTitle>
             </CardHeader>
             <CardContent className="pt-0">
               <Table>
@@ -4891,10 +4909,12 @@ function ModelFactCard({
 function ModelMetaItem({
   label,
   value,
+  icon,
   copyValue,
 }: {
   label: string;
   value: string;
+  icon?: ReactNode;
   copyValue?: string;
 }) {
   const [copied, setCopied] = useState(false);
@@ -4913,7 +4933,10 @@ function ModelMetaItem({
   return (
     <div className="rounded-lg border bg-muted/25 px-3 py-2">
       <div className="flex items-center justify-between gap-3">
-        <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+        <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+          {icon ? <span className="shrink-0">{icon}</span> : null}
+          <span>{label}</span>
+        </div>
         {copyValue ? (
           <Button
             type="button"
@@ -4929,6 +4952,36 @@ function ModelMetaItem({
         ) : null}
       </div>
       <div className="mt-1 text-sm font-medium [overflow-wrap:anywhere]">{value}</div>
+    </div>
+  );
+}
+
+function ModelMetaLinkItem({
+  label,
+  href,
+  text,
+  icon,
+}: {
+  label: string;
+  href: string;
+  text: string;
+  icon?: ReactNode;
+}) {
+  return (
+    <div className="rounded-lg border bg-muted/25 px-3 py-2">
+      <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+        {icon ? <span className="shrink-0">{icon}</span> : null}
+        <span>{label}</span>
+      </div>
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        className="mt-1 inline-flex items-center gap-1.5 text-sm font-medium underline-offset-4 hover:text-foreground hover:underline [overflow-wrap:anywhere]"
+      >
+        <span>{text}</span>
+        <ExternalLink className="h-3 w-3 shrink-0" />
+      </a>
     </div>
   );
 }
@@ -4993,6 +5046,10 @@ function huggingFacePathFromUrl(url?: string) {
   return url
     .replace(/^https?:\/\/huggingface\.co\//, '')
     .replace(/\/$/, '');
+}
+
+function isHuggingFaceUrl(url?: string) {
+  return !!url && /^https?:\/\/huggingface\.co\//.test(url);
 }
 
 function modelFullFileName(model?: MeshModel | null) {
