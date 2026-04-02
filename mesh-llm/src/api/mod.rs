@@ -14,12 +14,16 @@
 //! The dashboard is mostly read-only — shows status, topology, and models.
 //! Local model load/unload is exposed for operator control.
 
+mod assets;
+mod http;
 mod state;
 mod status;
 
 pub use self::state::{MeshApi, RuntimeControlRequest, RuntimeModelPayload, RuntimeProcessPayload};
 pub(crate) use self::status::classify_runtime_error;
 
+use self::assets::{respond_console_asset, respond_console_index};
+use self::http::{http_body_text, respond_error, respond_json, respond_runtime_error};
 use self::state::ApiInner;
 use self::status::{
     build_gpus, build_runtime_processes_payload, build_runtime_status_payload,
@@ -27,14 +31,11 @@ use self::status::{
     RuntimeStatusPayload, StatusPayload,
 };
 use crate::{affinity, election, mesh, nostr, plugin, proxy};
-use include_dir::{include_dir, Dir};
-use serde::Serialize;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{watch, Mutex};
 
-static CONSOLE_DIST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/ui/dist");
 const MESH_LLM_VERSION: &str = crate::VERSION;
 
 impl MeshApi {
@@ -1027,141 +1028,6 @@ async fn handle_request(mut stream: TcpStream, state: &MeshApi) -> anyhow::Resul
             respond_error(&mut stream, 404, "Not found").await?;
         }
     }
-    Ok(())
-}
-
-fn http_body_text(raw: &[u8]) -> &str {
-    let body_start = raw
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .map(|idx| idx + 4)
-        .unwrap_or(raw.len());
-    std::str::from_utf8(&raw[body_start..]).unwrap_or("")
-}
-
-async fn respond_error(stream: &mut TcpStream, code: u16, msg: &str) -> anyhow::Result<()> {
-    let body = serde_json::to_string(&serde_json::json!({"error": msg}))
-        .unwrap_or_else(|_| r#"{"error":"internal error"}"#.to_string());
-    let status = match code {
-        400 => "Bad Request",
-        404 => "Not Found",
-        409 => "Conflict",
-        422 => "Unprocessable Content",
-        405 => "Method Not Allowed",
-        500 => "Internal Server Error",
-        502 => "Bad Gateway",
-        503 => "Service Unavailable",
-        _ => "Unknown",
-    };
-    let resp = format!(
-        "HTTP/1.1 {code} {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-        body.len(), body
-    );
-    stream.write_all(resp.as_bytes()).await?;
-    Ok(())
-}
-
-async fn respond_json<T: Serialize>(
-    stream: &mut TcpStream,
-    code: u16,
-    value: &T,
-) -> anyhow::Result<()> {
-    let json = serde_json::to_string(value)?;
-    let status = match code {
-        200 => "OK",
-        201 => "Created",
-        _ => "OK",
-    };
-    let resp = format!(
-        "HTTP/1.1 {code} {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-        json.len(),
-        json
-    );
-    stream.write_all(resp.as_bytes()).await?;
-    Ok(())
-}
-
-async fn respond_runtime_error(stream: &mut TcpStream, msg: &str) -> anyhow::Result<()> {
-    respond_error(stream, classify_runtime_error(msg), msg).await
-}
-
-async fn respond_console_index(stream: &mut TcpStream) -> anyhow::Result<bool> {
-    if let Some(file) = CONSOLE_DIST.get_file("index.html") {
-        respond_bytes(
-            stream,
-            200,
-            "OK",
-            "text/html; charset=utf-8",
-            file.contents(),
-        )
-        .await?;
-        return Ok(true);
-    }
-    Ok(false)
-}
-
-async fn respond_console_asset(stream: &mut TcpStream, path: &str) -> anyhow::Result<bool> {
-    let rel = path.trim_start_matches('/');
-    if rel.contains("..") {
-        return Ok(false);
-    }
-    let Some(file) = CONSOLE_DIST.get_file(rel) else {
-        return Ok(false);
-    };
-    let content_type = match rel.rsplit('.').next().unwrap_or("") {
-        "js" => "text/javascript; charset=utf-8",
-        "css" => "text/css; charset=utf-8",
-        "svg" => "image/svg+xml",
-        "json" => "application/json; charset=utf-8",
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "webp" => "image/webp",
-        "woff2" => "font/woff2",
-        _ => "application/octet-stream",
-    };
-    // Hashed asset filenames (Vite output) are immutable — cache forever.
-    // Non-hashed assets (favicon, manifest) get short cache.
-    let cache_control = if rel.starts_with("assets/") {
-        "public, max-age=31536000, immutable"
-    } else {
-        "public, max-age=3600"
-    };
-    respond_bytes_cached(
-        stream,
-        200,
-        "OK",
-        content_type,
-        cache_control,
-        file.contents(),
-    )
-    .await?;
-    Ok(true)
-}
-
-async fn respond_bytes(
-    stream: &mut TcpStream,
-    code: u16,
-    status: &str,
-    content_type: &str,
-    body: &[u8],
-) -> anyhow::Result<()> {
-    respond_bytes_cached(stream, code, status, content_type, "no-cache", body).await
-}
-
-async fn respond_bytes_cached(
-    stream: &mut TcpStream,
-    code: u16,
-    status: &str,
-    content_type: &str,
-    cache_control: &str,
-    body: &[u8],
-) -> anyhow::Result<()> {
-    let header = format!(
-        "HTTP/1.1 {code} {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: {cache_control}\r\n\r\n",
-        body.len()
-    );
-    stream.write_all(header.as_bytes()).await?;
-    stream.write_all(body).await?;
     Ok(())
 }
 
