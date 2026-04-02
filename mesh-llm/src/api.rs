@@ -1795,11 +1795,10 @@ async fn respond_console_asset(stream: &mut TcpStream, path: &str) -> anyhow::Re
         "woff2" => "font/woff2",
         _ => "application/octet-stream",
     };
-    // The console UI is embedded into the binary and regularly rebuilt during
-    // local iteration, so asset URLs should be revalidated instead of cached
-    // forever across node restarts.
+    // Hashed asset filenames (Vite output) are immutable — cache forever.
+    // Non-hashed assets (favicon, manifest) get short cache.
     let cache_control = if rel.starts_with("assets/") {
-        "no-cache"
+        "public, max-age=31536000, immutable"
     } else {
         "public, max-age=3600"
     };
