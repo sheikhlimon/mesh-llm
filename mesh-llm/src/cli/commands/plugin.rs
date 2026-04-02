@@ -1,8 +1,8 @@
 use anyhow::Result;
 
-use crate::app;
 use crate::cli::{Cli, PluginCommand};
 use crate::plugin;
+use crate::runtime;
 
 pub(crate) async fn run_plugin_command(command: &PluginCommand, cli: &Cli) -> Result<()> {
     match command {
@@ -19,7 +19,7 @@ pub(crate) async fn run_plugin_command(command: &PluginCommand, cli: &Cli) -> Re
             );
         }
         PluginCommand::List => {
-            let resolved = app::load_resolved_plugins(cli)?;
+            let resolved = runtime::load_resolved_plugins(cli)?;
             for spec in resolved.externals {
                 println!(
                     "{}\tkind=external\tcommand={}\targs={}",

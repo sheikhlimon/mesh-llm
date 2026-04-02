@@ -1,8 +1,7 @@
 use anyhow::Result;
 
-use crate::app;
 use crate::launch;
-use crate::{mesh, nostr};
+use crate::{mesh, nostr, runtime};
 
 pub(crate) async fn run_discover(
     model: Option<String>,
@@ -11,7 +10,7 @@ pub(crate) async fn run_discover(
     auto_join: bool,
     relays: Vec<String>,
 ) -> Result<()> {
-    let relays = app::nostr_relays(&relays);
+    let relays = runtime::nostr_relays(&relays);
 
     let filter = nostr::MeshFilter {
         model,

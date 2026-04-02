@@ -5,7 +5,6 @@ mod plugin;
 
 use anyhow::Result;
 
-use crate::app;
 use crate::cli::commands::blackboard::{install_skill, run_blackboard};
 use crate::cli::commands::discover::{run_discover, run_stop};
 use crate::cli::commands::integrations::{run_claude, run_goose};
@@ -13,7 +12,7 @@ use crate::cli::commands::plugin::run_plugin_command;
 use crate::cli::models::dispatch_models_command;
 use crate::cli::runtime::{run_drop, run_load, run_status, RuntimeCommand};
 use crate::cli::{Cli, Command};
-use crate::{models, nostr};
+use crate::{models, nostr, runtime};
 
 pub(crate) async fn dispatch(cli: &Cli) -> Result<bool> {
     let Some(cmd) = cli.command.as_ref() else {
@@ -92,7 +91,7 @@ pub(crate) async fn dispatch(cli: &Cli) -> Result<bool> {
             mcp,
         } => {
             if *mcp {
-                app::run_plugin_mcp(cli).await
+                runtime::run_plugin_mcp(cli).await
             } else if text.as_deref() == Some("install-skill") {
                 install_skill()
             } else {

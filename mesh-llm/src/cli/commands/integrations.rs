@@ -1,12 +1,12 @@
 use anyhow::Result;
 
-use crate::app;
+use crate::runtime;
 
 pub(crate) async fn run_goose(model: Option<String>, port: u16) -> Result<()> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()?;
-    let (models, chosen, mut mesh_child) = app::check_mesh(&client, port, &model).await?;
+    let (models, chosen, mut mesh_child) = runtime::check_mesh(&client, port, &model).await?;
 
     let goose_config_dir = dirs::home_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
@@ -80,7 +80,7 @@ pub(crate) async fn run_claude(model: Option<String>, port: u16) -> Result<()> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()?;
-    let (_models, chosen, mut mesh_child) = app::check_mesh(&client, port, &model).await?;
+    let (_models, chosen, mut mesh_child) = runtime::check_mesh(&client, port, &model).await?;
 
     let base_url = format!("http://127.0.0.1:{port}");
     let settings = serde_json::json!({

@@ -1,15 +1,15 @@
 mod discovery;
+mod local;
 mod proxy;
-mod runtime;
 
 use self::discovery::{nostr_rediscovery, start_new_mesh};
-use self::proxy::{api_proxy, bootstrap_proxy};
-use self::runtime::{
+use self::local::{
     add_runtime_local_target, add_serving_assignment, advertise_model_ready, local_process_payload,
     remove_runtime_local_target, remove_serving_assignment, resolved_model_name,
     start_runtime_local_model, withdraw_advertised_model, LocalRuntimeModelHandle,
     ManagedModelController, RuntimeEvent,
 };
+use self::proxy::{api_proxy, bootstrap_proxy};
 use crate::cli::Cli;
 use crate::mesh::NodeRole;
 use crate::models::catalog;

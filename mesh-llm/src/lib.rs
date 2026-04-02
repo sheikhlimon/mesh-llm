@@ -1,6 +1,5 @@
 mod affinity;
 mod api;
-pub(crate) mod app;
 mod autoupdate;
 mod benchmark;
 mod cli;
@@ -19,6 +18,7 @@ mod protocol;
 mod proxy;
 mod rewrite;
 mod router;
+pub(crate) mod runtime;
 mod tunnel;
 
 pub mod proto {
@@ -36,5 +36,5 @@ use anyhow::Result;
 pub const VERSION: &str = "0.54.0";
 
 pub async fn run() -> Result<()> {
-    app::run().await
+    runtime::run().await
 }
