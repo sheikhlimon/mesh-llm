@@ -4939,7 +4939,7 @@ function NodeSidebar({
             tooltip={nodeMeshShareTooltip(node.role)}
           />
           <ModelFactCard
-            title="Hot Models"
+            title="Models"
             value={`${modelRows.length}`}
             icon={<Sparkles className="h-4 w-4" />}
             tooltip={nodeHotModelsTooltip()}
@@ -4950,7 +4950,7 @@ function NodeSidebar({
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm">
               <Sparkles className="h-4 w-4 text-muted-foreground" />
-              <span>Hot Models</span>
+              <span>Models</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
@@ -5720,7 +5720,7 @@ function nodeMeshShareTooltip(role: string) {
 }
 
 function nodeHotModelsTooltip() {
-  return 'Distinct models this node is hosting, serving, or requesting right now.';
+  return 'Models this node is hosting, serving, or requesting right now.';
 }
 
 function nodeModelFlagTooltip(flag: string) {
