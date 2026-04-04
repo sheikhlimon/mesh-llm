@@ -205,6 +205,41 @@ mesh-llm --model Qwen2.5-32B    # dashboard at http://localhost:3131
 
 Live topology, VRAM bars per node, model picker, built-in chat. Everything comes from `/api/status` (JSON) and `/api/events` (SSE).
 
+## Multimodal Support
+
+mesh-llm supports multimodal requests on:
+
+- `POST /v1/chat/completions`
+- `POST /v1/responses`
+
+The console supports image, audio, and file attachments. Large attachments use request-scoped blob upload rather than permanent storage.
+
+### Current support matrix
+
+| Family / model type | Vision | Audio | Notes |
+|---|---|---|---|
+| `Qwen3-VL`, `Qwen3VL` | yes | no | Example: `Qwen3VL-2B-Instruct-Q4_K_M` |
+| `Qwen2-VL`, `Qwen2.5-VL` | yes | no | Vision-capable Qwen VL families |
+| `LLaVA`, `mllama`, `PaliGemma`, `Idefics`, `Molmo`, `InternVL`, `GLM-4V`, `Ovis`, `Florence` | yes | no | Detected as vision-capable families |
+| `Qwen2-Audio` | no | yes | Audio-capable family |
+| `SeaLLM-Audio` | no | yes | Audio-capable family |
+| `Ultravox` | no | yes | Audio-capable family |
+| `Omni` | no or metadata-dependent | yes | Example: `Qwen2.5-Omni-3B-Q4_K_M` |
+| `Whisper` | no | yes | Audio-capable family |
+| Any GGUF with `mmproj` sidecar | yes | depends | Strong local signal for vision support |
+| Any model with `vision_config` / vision token IDs | yes | depends | Promoted by metadata |
+| Any model with `audio_config` / audio token IDs | depends | yes | Promoted by metadata |
+| Generic `multimodal`, `-vl`, `image`, `video`, `voice` naming only | likely | likely | Hint only, not a strong routing guarantee |
+
+Notes:
+
+- `yes` means mesh-llm treats the model as runtime-capable for routing and UI.
+- `likely` means mesh-llm shows a weaker hint but does not rely on it as a hard capability.
+- Mixed image+audio requests work only when the selected model/runtime actually supports both modalities.
+- Non-goals: `POST /v1/audio/transcriptions`, `POST /v1/audio/speech`, and `v1/realtime`.
+
+For the full capability and transport details, see [mesh-llm/docs/MULTI_MODAL.md](mesh-llm/docs/MULTI_MODAL.md).
+
 ### Development
 
 Build-from-source and UI development instructions are in [CONTRIBUTING.md](CONTRIBUTING.md).

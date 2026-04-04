@@ -66,6 +66,69 @@ Why:
 - `vision` and `audio` are still required for correct routing.
 - A model can be multimodal without supporting both image and audio equally.
 
+## Supported Family Matrix
+
+This is the current mesh-llm capability matrix, based on the inference logic in
+`mesh-llm/src/models/capabilities.rs`.
+
+Important:
+
+- `supported` means mesh-llm will treat the family/model as runtime-capable for routing and UI.
+- `likely` means mesh-llm will surface a weaker multimodal hint, but not rely on it as a hard runtime capability.
+- Catalog/download metadata can upgrade a family from `likely` to `supported`, for example:
+  - vision models with an `mmproj`
+  - models whose metadata exposes `vision_config`, `audio_config`, or modality token IDs
+
+### Vision
+
+| Family / signal | mesh-llm status | Notes / examples |
+|---|---|---|
+| `Qwen3-VL`, `Qwen3VL` | `supported` | Example: `Qwen3VL-2B-Instruct-Q4_K_M` |
+| `Qwen2-VL`, `Qwen2.5-VL` | `supported` | Any matching `qwen2-vl`, `qwen2.5-vl` family name |
+| `LLaVA` | `supported` | Covers `llava` family names |
+| `mllama` | `supported` | Llama vision variants exposed as `mllama` |
+| `PaliGemma` | `supported` | Family-name detection |
+| `Idefics` | `supported` | Family-name detection |
+| `Molmo` | `supported` | Family-name detection |
+| `InternVL` | `supported` | Family-name detection |
+| `GLM-4V` / `GLM4V` | `supported` | Family-name detection |
+| `Ovis` | `supported` | Family-name detection |
+| `Florence` | `supported` | Family-name detection |
+| Any catalog model with `mmproj` | `supported` | This is the strongest repo-local signal for GGUF vision models |
+| Any model with `vision_config` or vision token IDs | `supported` | Derived from local/remote metadata JSON |
+| Generic `-vl`, `_vl`, `video`, `multimodal`, `image` names | `likely` | Hint only until promoted by stronger metadata |
+
+### Audio
+
+| Family / signal | mesh-llm status | Notes / examples |
+|---|---|---|
+| `Qwen2-Audio` | `supported` | Covers `qwen2-audio` / `qwen2_audio` |
+| `SeaLLM-Audio` | `supported` | Covers `seallm-audio` / `seallm_audio` |
+| `Ultravox` | `supported` | Family-name detection |
+| `Omni` | `supported` | Example: `Qwen2.5-Omni-3B-Q4_K_M` |
+| `Whisper` | `supported` | Family-name detection |
+| Generic `audio` / `speech` family names | `supported` | Strong signal in current inference code |
+| Any model with `audio_config` or audio token IDs | `supported` | Derived from local/remote metadata JSON |
+| Generic `voice` naming only | `likely` | Hint only unless stronger metadata is present |
+
+### Multimodal Umbrella
+
+| Case | mesh-llm status | Notes |
+|---|---|---|
+| `vision != none` | `multimodal = true` | Vision implies multimodal |
+| `audio != none` | `multimodal = true` | Audio implies multimodal |
+| Both vision and audio supported | `multimodal = true` | Best fit for mixed image+audio routing |
+| Name-only generic `multimodal` signal | `likely` for modality-specific support | Not enough on its own for hard vision/audio routing |
+
+### Current Practical Examples
+
+| Model | Vision | Audio | Notes |
+|---|---|---|---|
+| `Qwen3VL-2B-Instruct-Q4_K_M` | `supported` | `none` | Good current image test model |
+| `Qwen2.5-Omni-3B-Q4_K_M` | `none` or metadata-dependent | `supported` | Good current audio test model |
+| Catalog GGUF with `mmproj` | `supported` | depends | Vision promoted by sidecar |
+| Generic `multimodal` name with no sidecar/metadata | `likely` | `likely`/`none` | UI hint only; not a strong routing guarantee |
+
 ## Protocol Plan
 
 Preferred path: additive change.
