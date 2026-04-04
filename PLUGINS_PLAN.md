@@ -151,7 +151,7 @@ Target behavior:
 
 Build real plugins that exercise the design.
 
-The first plugin should be an Ollama provider plugin.
+The first inference plugin should be a Lemonade endpoint provider plugin.
 
 After that, build at least one external MCP endpoint plugin.
 
@@ -163,6 +163,8 @@ These plugins should validate:
 - capability resolution
 - MCP aggregation
 - HTTP binding ergonomics
+
+The Lemonade plugin should take inspiration from the external backend work in [PR #150](https://github.com/michaelneale/mesh-llm/pull/150), but implemented using the new endpoint registration architecture rather than ad hoc `inference/register` notifications in the transport layer.
 
 ### Phase 9: Host-Owned Plugin Crypto API
 
@@ -189,7 +191,7 @@ The best near-term execution order is:
 3. Add manifest-driven MCP.
 4. Add manifest-driven HTTP bindings.
 5. Add endpoint registration and health tracking.
-6. Build the Ollama provider plugin.
+6. Build the Lemonade endpoint provider plugin.
 7. Migrate blackboard off bespoke core behavior.
 8. Add the host-owned crypto APIs.
 
@@ -228,7 +230,7 @@ Include corner cases such as:
 
 ### Inference Plugin Testing
 
-Use a local Ollama installation when available to validate inference endpoint registration end to end.
+Use a Lemonade-backed inference plugin to validate inference endpoint registration end to end.
 
 This should validate:
 
@@ -239,11 +241,21 @@ This should validate:
 - endpoint health transitions
 - automatic endpoint recovery
 
-If Ollama is not available, keep a fallback test mode with a fake OpenAI-compatible inference server for protocol and routing validation.
+The Lemonade plugin should prove that a plugin can describe an external OpenAI-compatible backend and let `mesh-llm` talk to it directly.
+
+Take implementation cues from [PR #150](https://github.com/michaelneale/mesh-llm/pull/150):
+
+- connect to an already-running Lemonade endpoint
+- perform health checks and model discovery
+- register the endpoint and its models with the host
+- mark the endpoint unavailable on health failure without unloading the plugin
+- restore the endpoint automatically when health returns
+
+If Lemonade is not available locally, keep a fallback test mode with a fake OpenAI-compatible inference server for protocol and routing validation.
 
 ### Additional Testing Needed
 
-Beyond fake MCP/HTTP servers and the Ollama provider, we should also test:
+Beyond fake MCP/HTTP servers and the Lemonade provider, we should also test:
 
 - backward compatibility of the plugin control protocol where required
 - plugin startup and shutdown behavior

@@ -9,6 +9,7 @@ use anyhow::{anyhow, bail, Context, Result};
 pub use mesh_llm_plugin::proto;
 use rmcp::model::ServerInfo;
 use serde::Serialize;
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 #[cfg(test)]
 use std::collections::BTreeSet;
@@ -103,7 +104,22 @@ pub struct PluginSummary {
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub tools: Vec<ToolSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub manifest: Option<PluginManifestOverview>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PluginManifestOverview {
+    pub mcp_tools: usize,
+    pub mcp_resources: usize,
+    pub mcp_resource_templates: usize,
+    pub mcp_prompts: usize,
+    pub mcp_completions: usize,
+    pub http_bindings: usize,
+    pub endpoints: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub capabilities: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -387,6 +403,14 @@ impl PluginManager {
         plugin.manifest().await
     }
 
+    pub async fn manifest_json(&self, plugin_name: &str) -> Result<Option<Value>> {
+        Ok(self
+            .manifest(plugin_name)
+            .await?
+            .as_ref()
+            .map(plugin_manifest_to_json))
+    }
+
     pub async fn set_rpc_bridge(&self, bridge: Option<Arc<dyn PluginRpcBridge>>) {
         *self.inner.rpc_bridge.lock().await = bridge;
     }
@@ -548,6 +572,127 @@ impl PluginManager {
                 }
             }
         });
+    }
+}
+
+pub(crate) fn plugin_manifest_overview(manifest: &proto::PluginManifest) -> PluginManifestOverview {
+    PluginManifestOverview {
+        mcp_tools: manifest.mcp_tools.len(),
+        mcp_resources: manifest.mcp_resources.len(),
+        mcp_resource_templates: manifest.mcp_resource_templates.len(),
+        mcp_prompts: manifest.mcp_prompts.len(),
+        mcp_completions: manifest.mcp_completions.len(),
+        http_bindings: manifest.http_bindings.len(),
+        endpoints: manifest.endpoints.len(),
+        capabilities: manifest.capabilities.clone(),
+    }
+}
+
+pub(crate) fn plugin_manifest_to_json(manifest: &proto::PluginManifest) -> Value {
+    json!({
+        "mcp_tools": manifest.mcp_tools.iter().map(|tool| {
+            json!({
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema_json": tool.input_schema_json,
+                "output_schema_json": tool.output_schema_json,
+                "title": tool.title,
+            })
+        }).collect::<Vec<_>>(),
+        "mcp_resources": manifest.mcp_resources.iter().map(|resource| {
+            json!({
+                "uri": resource.uri,
+                "name": resource.name,
+                "description": resource.description,
+                "mime_type": resource.mime_type,
+            })
+        }).collect::<Vec<_>>(),
+        "mcp_resource_templates": manifest.mcp_resource_templates.iter().map(|resource| {
+            json!({
+                "uri_template": resource.uri_template,
+                "name": resource.name,
+                "description": resource.description,
+                "mime_type": resource.mime_type,
+            })
+        }).collect::<Vec<_>>(),
+        "mcp_prompts": manifest.mcp_prompts.iter().map(|prompt| {
+            json!({
+                "name": prompt.name,
+                "description": prompt.description,
+            })
+        }).collect::<Vec<_>>(),
+        "mcp_completions": manifest.mcp_completions.iter().map(|completion| {
+            json!({
+                "argument_ref": completion.argument_ref,
+                "description": completion.description,
+            })
+        }).collect::<Vec<_>>(),
+        "http_bindings": manifest.http_bindings.iter().map(|binding| {
+            json!({
+                "binding_id": binding.binding_id,
+                "method": http_method_name(binding.method),
+                "path": binding.path,
+                "operation_name": binding.operation_name,
+                "request_body_mode": http_body_mode_name(binding.request_body_mode),
+                "response_body_mode": http_body_mode_name(binding.response_body_mode),
+                "request_schema_json": binding.request_schema_json,
+                "response_schema_json": binding.response_schema_json,
+            })
+        }).collect::<Vec<_>>(),
+        "endpoints": manifest.endpoints.iter().map(|endpoint| {
+            json!({
+                "endpoint_id": endpoint.endpoint_id,
+                "kind": endpoint_kind_name(endpoint.kind),
+                "transport_kind": endpoint_transport_kind_name(endpoint.transport_kind),
+                "protocol": endpoint.protocol,
+                "address": endpoint.address,
+                "args": endpoint.args,
+                "namespace": endpoint.namespace,
+                "supports_streaming": endpoint.supports_streaming,
+                "managed_by_plugin": endpoint.managed_by_plugin,
+            })
+        }).collect::<Vec<_>>(),
+        "capabilities": manifest.capabilities,
+    })
+}
+
+fn http_method_name(value: i32) -> &'static str {
+    match proto::HttpMethod::try_from(value).unwrap_or(proto::HttpMethod::Unspecified) {
+        proto::HttpMethod::Get => "GET",
+        proto::HttpMethod::Post => "POST",
+        proto::HttpMethod::Put => "PUT",
+        proto::HttpMethod::Patch => "PATCH",
+        proto::HttpMethod::Delete => "DELETE",
+        proto::HttpMethod::Unspecified => "UNSPECIFIED",
+    }
+}
+
+fn http_body_mode_name(value: i32) -> &'static str {
+    match proto::HttpBodyMode::try_from(value).unwrap_or(proto::HttpBodyMode::Unspecified) {
+        proto::HttpBodyMode::Buffered => "buffered",
+        proto::HttpBodyMode::Streamed => "streamed",
+        proto::HttpBodyMode::Unspecified => "unspecified",
+    }
+}
+
+fn endpoint_kind_name(value: i32) -> &'static str {
+    match proto::EndpointKind::try_from(value).unwrap_or(proto::EndpointKind::Unspecified) {
+        proto::EndpointKind::Inference => "inference",
+        proto::EndpointKind::Mcp => "mcp",
+        proto::EndpointKind::Unspecified => "unspecified",
+    }
+}
+
+fn endpoint_transport_kind_name(value: i32) -> &'static str {
+    match proto::EndpointTransportKind::try_from(value)
+        .unwrap_or(proto::EndpointTransportKind::Unspecified)
+    {
+        proto::EndpointTransportKind::EndpointTransportHttp => "http",
+        proto::EndpointTransportKind::EndpointTransportUnixSocket => "unix_socket",
+        proto::EndpointTransportKind::EndpointTransportStdio => "stdio",
+        proto::EndpointTransportKind::EndpointTransportNamedPipe => "named_pipe",
+        proto::EndpointTransportKind::EndpointTransportTcp => "tcp",
+        proto::EndpointTransportKind::Unspecified => "unspecified",
     }
 }
 

@@ -1,4 +1,5 @@
 use super::config::{ExternalPluginSpec, PluginHostMode};
+use super::plugin_manifest_overview;
 use super::support::{plugin_error, serialize_params, summarize_capabilities};
 use super::transport::{bind_local_listener, connection_loop};
 use super::{
@@ -62,6 +63,7 @@ impl ExternalPlugin {
                 command: Some(spec.command.clone()),
                 args: spec.args.clone(),
                 tools: Vec::new(),
+                manifest: None,
                 error: None,
             })),
             server_info: Arc::new(Mutex::new(None)),
@@ -87,7 +89,14 @@ impl ExternalPlugin {
     }
 
     pub(crate) async fn summary(&self) -> PluginSummary {
-        self.summary.lock().await.clone()
+        let mut summary = self.summary.lock().await.clone();
+        summary.manifest = self
+            .manifest
+            .lock()
+            .await
+            .as_ref()
+            .map(plugin_manifest_overview);
+        summary
     }
 
     pub(crate) async fn is_enabled_running(&self) -> bool {

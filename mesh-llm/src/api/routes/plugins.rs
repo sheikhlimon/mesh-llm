@@ -11,6 +11,9 @@ pub(super) async fn handle(
 ) -> anyhow::Result<()> {
     match (method, path_only) {
         ("GET", "/api/plugins") => handle_list(stream, state).await,
+        ("GET", p) if p.starts_with("/api/plugins/") && p.ends_with("/manifest") => {
+            handle_manifest(stream, state, p).await
+        }
         ("GET", p) if p.starts_with("/api/plugins/") && p.ends_with("/tools") => {
             handle_tools(stream, state, p).await
         }
@@ -47,6 +50,34 @@ async fn handle_tools(stream: &mut TcpStream, state: &MeshApi, path: &str) -> an
                 json
             );
             stream.write_all(resp.as_bytes()).await?;
+        }
+        Err(e) => {
+            respond_error(stream, 404, &e.to_string()).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn handle_manifest(
+    stream: &mut TcpStream,
+    state: &MeshApi,
+    path: &str,
+) -> anyhow::Result<()> {
+    let rest = &path["/api/plugins/".len()..];
+    let plugin_name = rest.trim_end_matches("/manifest");
+    let plugin_manager = state.inner.lock().await.plugin_manager.clone();
+    match plugin_manager.manifest_json(plugin_name).await {
+        Ok(Some(manifest)) => {
+            let json = serde_json::to_string(&manifest)?;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                json.len(),
+                json
+            );
+            stream.write_all(resp.as_bytes()).await?;
+        }
+        Ok(None) => {
+            respond_error(stream, 404, "Plugin did not publish a manifest").await?;
         }
         Err(e) => {
             respond_error(stream, 404, &e.to_string()).await?;
