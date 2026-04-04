@@ -2,10 +2,10 @@ use anyhow::Result;
 use mesh_llm_plugin::{
     accept_bulk_transfer_message, bulk_transfer_sequence, cancel_task_result, complete_result,
     empty_object_schema, get_prompt_result, get_task_payload_result, get_task_result,
-    json_reply_channel_message, json_schema_tool, json_string, list_tasks, parse_optional_json,
-    plugin_server_info_full, prompt, prompt_argument, proto, read_resource_result, task,
-    tool_with_schema, PluginRuntime, PromptRouter, ResourceRouter, SubscriptionSet, TaskStore,
-    ToolRouter,
+    json_reply_channel_message, json_schema_operation, json_string, list_tasks,
+    operation_with_schema, parse_optional_json, plugin_server_info_full, prompt, prompt_argument,
+    proto, read_resource_result, task, OperationRouter, PluginRuntime, PromptRouter,
+    ResourceRouter, SubscriptionSet, TaskStore,
 };
 use rmcp::model::{
     AnnotateAble, LoggingLevel, PromptMessage, PromptMessageRole, ServerInfo, TaskStatus,
@@ -413,7 +413,7 @@ fn build_example_plugin(state: Arc<Mutex<ExampleState>>) -> mesh_llm_plugin::Sim
                 "mesh-events".into(),
             ]),
     )
-    .with_tool_router(tool_router(state.clone()))
+    .with_operation_router(operation_router(state.clone()))
     .with_prompt_router(prompt_router(state.clone()))
     .with_resource_router(resource_router(state.clone()))
     .with_completion_router(completion_router())
@@ -545,12 +545,12 @@ fn build_example_plugin(state: Arc<Mutex<ExampleState>>) -> mesh_llm_plugin::Sim
     })
 }
 
-fn tool_router(state: Arc<Mutex<ExampleState>>) -> ToolRouter {
-    let mut router = ToolRouter::new();
+fn operation_router(state: Arc<Mutex<ExampleState>>) -> OperationRouter {
+    let mut router = OperationRouter::new();
 
     let snapshot_state = state.clone();
     router.add_json_default::<SnapshotParams, serde_json::Value, _>(
-        tool_with_schema(
+        operation_with_schema(
             "snapshot",
             "Inspect the example plugin state: known peers, mesh events, recent channel messages, recent bulk transfers, and counters.",
             serde_json::json!({
@@ -576,7 +576,7 @@ fn tool_router(state: Arc<Mutex<ExampleState>>) -> ToolRouter {
 
     let send_message_state = state.clone();
     router.add_json::<SendMessageArguments, serde_json::Value, _>(
-        json_schema_tool::<SendMessageArguments>(
+        json_schema_operation::<SendMessageArguments>(
             "send_message",
             "Send a plugin channel message to one peer or broadcast to all peers. Leave target_peer_id empty or set it to 'all' to broadcast.",
         ),
@@ -611,7 +611,7 @@ fn tool_router(state: Arc<Mutex<ExampleState>>) -> ToolRouter {
 
     let send_bulk_state = state.clone();
     router.add_json::<SendBulkArguments, serde_json::Value, _>(
-        json_schema_tool::<SendBulkArguments>(
+        json_schema_operation::<SendBulkArguments>(
             "send_bulk",
             "Send a bulk transfer to one peer or broadcast to all peers. This emits OFFER, CHUNK, and COMPLETE frames so the full bulk transport path is exercised.",
         ),
@@ -656,7 +656,7 @@ fn tool_router(state: Arc<Mutex<ExampleState>>) -> ToolRouter {
 
     let clear_state = state.clone();
     router.add_json_default::<ClearParams, serde_json::Value, _>(
-        tool_with_schema(
+        operation_with_schema(
             "clear",
             "Clear recorded example-plugin history while keeping the current peer snapshot.",
             empty_object_schema(),

@@ -26,6 +26,8 @@ message Envelope {
     CancelStreamNotification cancel_stream_notification = 25;
     CloseStreamNotification close_stream_notification = 26;
     StreamError stream_error = 27;
+    InvokeServiceRequest invoke_service_request = 28;
+    InvokeServiceResponse invoke_service_response = 29;
   }
 }
 
@@ -171,17 +173,36 @@ message MeshBulkFrame {
 }
 
 message PluginManifest {
-  repeated McpToolManifest mcp_tools = 1;
-  repeated McpResourceManifest mcp_resources = 2;
-  repeated McpResourceTemplateManifest mcp_resource_templates = 3;
-  repeated McpPromptManifest mcp_prompts = 4;
-  repeated McpCompletionManifest mcp_completions = 5;
+  repeated OperationManifest operations = 1;
+  repeated ResourceManifest resources = 2;
+  repeated ResourceTemplateManifest resource_templates = 3;
+  repeated PromptManifest prompts = 4;
+  repeated CompletionManifest completions = 5;
   repeated HttpBindingManifest http_bindings = 6;
   repeated EndpointManifest endpoints = 7;
   repeated string capabilities = 8;
 }
 
-message McpToolManifest {
+enum ServiceKind {
+  SERVICE_KIND_UNSPECIFIED = 0;
+  SERVICE_KIND_OPERATION = 1;
+  SERVICE_KIND_PROMPT = 2;
+  SERVICE_KIND_RESOURCE = 3;
+  SERVICE_KIND_COMPLETION = 4;
+}
+
+message InvokeServiceRequest {
+  ServiceKind kind = 1;
+  string service_name = 2;
+  string input_json = 3;
+}
+
+message InvokeServiceResponse {
+  string output_json = 1;
+  bool is_error = 2;
+}
+
+message OperationManifest {
   string name = 1;
   string description = 2;
   string input_schema_json = 3;
@@ -189,26 +210,26 @@ message McpToolManifest {
   optional string title = 5;
 }
 
-message McpResourceManifest {
+message ResourceManifest {
   string uri = 1;
   string name = 2;
   optional string description = 3;
   optional string mime_type = 4;
 }
 
-message McpResourceTemplateManifest {
+message ResourceTemplateManifest {
   string uri_template = 1;
   string name = 2;
   optional string description = 3;
   optional string mime_type = 4;
 }
 
-message McpPromptManifest {
+message PromptManifest {
   string name = 1;
   optional string description = 2;
 }
 
-message McpCompletionManifest {
+message CompletionManifest {
   string argument_ref = 1;
   optional string description = 2;
 }

@@ -8,6 +8,10 @@ mod transport;
 use anyhow::{anyhow, bail, Context, Result};
 pub use mesh_llm_plugin::proto;
 use rmcp::model::ServerInfo;
+use rmcp::model::{
+    CompleteRequestParams, CompleteResult, GetPromptRequestParams, GetPromptResult,
+    ReadResourceRequestParams, ReadResourceResult,
+};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -121,11 +125,11 @@ pub struct PluginSummary {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct PluginManifestOverview {
-    pub mcp_tools: usize,
-    pub mcp_resources: usize,
-    pub mcp_resource_templates: usize,
-    pub mcp_prompts: usize,
-    pub mcp_completions: usize,
+    pub operations: usize,
+    pub resources: usize,
+    pub resource_templates: usize,
+    pub prompts: usize,
+    pub completions: usize,
     pub http_bindings: usize,
     pub endpoints: usize,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
@@ -487,6 +491,16 @@ impl PluginManager {
         plugin.call_tool(tool_name, arguments_json).await
     }
 
+    pub async fn invoke_operation(
+        &self,
+        plugin_name: &str,
+        operation_name: &str,
+        input_json: &str,
+    ) -> Result<ToolCallResult> {
+        self.call_tool(plugin_name, operation_name, input_json)
+            .await
+    }
+
     pub async fn inference_models(&self) -> Result<Vec<String>> {
         let mut models = Vec::new();
         for endpoint in self.inference_endpoints().await? {
@@ -594,18 +608,63 @@ impl PluginManager {
             .is_some()
     }
 
-    pub async fn call_tool_by_capability(
+    pub async fn invoke_operation_by_capability(
         &self,
         capability: &str,
-        tool_name: &str,
-        payload_json: &str,
+        operation_name: &str,
+        input_json: &str,
     ) -> Result<ToolCallResult> {
         let provider = self
             .available_provider_for_capability(capability)
             .await?
             .ok_or_else(|| anyhow!("No provider for capability '{capability}'"))?;
-        self.call_tool(&provider.plugin_name, tool_name, payload_json)
+        self.invoke_operation(&provider.plugin_name, operation_name, input_json)
             .await
+    }
+
+    pub async fn get_prompt(
+        &self,
+        plugin_name: &str,
+        prompt_name: &str,
+        params: GetPromptRequestParams,
+    ) -> Result<GetPromptResult> {
+        self.invoke_service_json(
+            plugin_name,
+            proto::ServiceKind::Prompt,
+            prompt_name,
+            &params,
+        )
+        .await
+    }
+
+    pub async fn read_resource(
+        &self,
+        plugin_name: &str,
+        resource_uri: &str,
+        params: ReadResourceRequestParams,
+    ) -> Result<ReadResourceResult> {
+        self.invoke_service_json(
+            plugin_name,
+            proto::ServiceKind::Resource,
+            resource_uri,
+            &params,
+        )
+        .await
+    }
+
+    pub async fn complete(
+        &self,
+        plugin_name: &str,
+        argument_ref: &str,
+        params: CompleteRequestParams,
+    ) -> Result<CompleteResult> {
+        self.invoke_service_json(
+            plugin_name,
+            proto::ServiceKind::Completion,
+            argument_ref,
+            &params,
+        )
+        .await
     }
 
     pub async fn mcp_request<T, P>(&self, plugin_name: &str, method: &str, params: P) -> Result<T>
@@ -677,6 +736,69 @@ impl PluginManager {
             .get(plugin_name)
             .with_context(|| format!("Unknown plugin '{plugin_name}'"))?;
         plugin.mcp_notify(method, params).await
+    }
+
+    async fn invoke_service_json<T, P>(
+        &self,
+        plugin_name: &str,
+        kind: proto::ServiceKind,
+        service_name: &str,
+        params: &P,
+    ) -> Result<T>
+    where
+        T: serde::de::DeserializeOwned,
+        P: Serialize,
+    {
+        if self.is_test_bridge_enabled(plugin_name) {
+            let method = match kind {
+                proto::ServiceKind::Operation => "tools/call",
+                proto::ServiceKind::Prompt => "prompts/get",
+                proto::ServiceKind::Resource => "resources/read",
+                proto::ServiceKind::Completion => "completion/complete",
+                proto::ServiceKind::Unspecified => {
+                    bail!("Service kind is required for test plugin '{plugin_name}'")
+                }
+            };
+            if method == "tools/call" {
+                let arguments = serde_json::to_value(params).with_context(|| {
+                    format!("Serialize operation params for test plugin '{plugin_name}'")
+                })?;
+                return self
+                    .mcp_request(
+                        plugin_name,
+                        method,
+                        serde_json::json!({
+                            "name": service_name,
+                            "arguments": arguments,
+                        }),
+                    )
+                    .await;
+            }
+            return self.mcp_request(plugin_name, method, params).await;
+        }
+        if let Some(summary) = self.inner.inactive.get(plugin_name) {
+            bail!(
+                "Plugin '{}' is disabled: {}",
+                plugin_name,
+                summary.error.as_deref().unwrap_or("unavailable")
+            );
+        }
+        let plugin = self
+            .inner
+            .plugins
+            .get(plugin_name)
+            .with_context(|| format!("Unknown plugin '{plugin_name}'"))?;
+        let input_json = serde_json::to_string(params)
+            .with_context(|| format!("Serialize service params for plugin '{plugin_name}'"))?;
+        let response = plugin
+            .invoke_service(kind, service_name, &input_json)
+            .await?;
+        serde_json::from_str(&response.output_json).with_context(|| {
+            format!(
+                "Decode service response '{}' from plugin '{}'",
+                service_name, plugin_name
+            )
+        })
     }
 
     fn is_test_bridge_enabled(&self, _plugin_name: &str) -> bool {
@@ -987,11 +1109,11 @@ pub(crate) async fn connect_test_side_stream(
 
 pub(crate) fn plugin_manifest_overview(manifest: &proto::PluginManifest) -> PluginManifestOverview {
     PluginManifestOverview {
-        mcp_tools: manifest.mcp_tools.len(),
-        mcp_resources: manifest.mcp_resources.len(),
-        mcp_resource_templates: manifest.mcp_resource_templates.len(),
-        mcp_prompts: manifest.mcp_prompts.len(),
-        mcp_completions: manifest.mcp_completions.len(),
+        operations: manifest.operations.len(),
+        resources: manifest.resources.len(),
+        resource_templates: manifest.resource_templates.len(),
+        prompts: manifest.prompts.len(),
+        completions: manifest.completions.len(),
         http_bindings: manifest.http_bindings.len(),
         endpoints: manifest.endpoints.len(),
         capabilities: manifest.capabilities.clone(),
@@ -1000,16 +1122,16 @@ pub(crate) fn plugin_manifest_overview(manifest: &proto::PluginManifest) -> Plug
 
 pub(crate) fn plugin_manifest_to_json(manifest: &proto::PluginManifest) -> Value {
     json!({
-        "mcp_tools": manifest.mcp_tools.iter().map(|tool| {
+        "operations": manifest.operations.iter().map(|operation| {
             json!({
-                "name": tool.name,
-                "description": tool.description,
-                "input_schema_json": tool.input_schema_json,
-                "output_schema_json": tool.output_schema_json,
-                "title": tool.title,
+                "name": operation.name,
+                "description": operation.description,
+                "input_schema_json": operation.input_schema_json,
+                "output_schema_json": operation.output_schema_json,
+                "title": operation.title,
             })
         }).collect::<Vec<_>>(),
-        "mcp_resources": manifest.mcp_resources.iter().map(|resource| {
+        "resources": manifest.resources.iter().map(|resource| {
             json!({
                 "uri": resource.uri,
                 "name": resource.name,
@@ -1017,7 +1139,7 @@ pub(crate) fn plugin_manifest_to_json(manifest: &proto::PluginManifest) -> Value
                 "mime_type": resource.mime_type,
             })
         }).collect::<Vec<_>>(),
-        "mcp_resource_templates": manifest.mcp_resource_templates.iter().map(|resource| {
+        "resource_templates": manifest.resource_templates.iter().map(|resource| {
             json!({
                 "uri_template": resource.uri_template,
                 "name": resource.name,
@@ -1025,13 +1147,13 @@ pub(crate) fn plugin_manifest_to_json(manifest: &proto::PluginManifest) -> Value
                 "mime_type": resource.mime_type,
             })
         }).collect::<Vec<_>>(),
-        "mcp_prompts": manifest.mcp_prompts.iter().map(|prompt| {
+        "prompts": manifest.prompts.iter().map(|prompt| {
             json!({
                 "name": prompt.name,
                 "description": prompt.description,
             })
         }).collect::<Vec<_>>(),
-        "mcp_completions": manifest.mcp_completions.iter().map(|completion| {
+        "completions": manifest.completions.iter().map(|completion| {
             json!({
                 "argument_ref": completion.argument_ref,
                 "description": completion.description,

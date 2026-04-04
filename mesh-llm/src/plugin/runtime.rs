@@ -3,15 +3,12 @@ use super::plugin_manifest_overview;
 use super::support::{plugin_error, serialize_params, summarize_capabilities};
 use super::transport::{bind_local_listener, connection_loop};
 use super::{
-    parse_optional_json, proto, PluginMeshEvent, PluginRpcBridge, PluginSummary, ToolCallResult,
-    ToolSummary, CONNECT_TIMEOUT_SECS, PROTOCOL_VERSION, REQUEST_TIMEOUT_SECS,
+    proto, PluginMeshEvent, PluginRpcBridge, PluginSummary, ToolCallResult, ToolSummary,
+    CONNECT_TIMEOUT_SECS, PROTOCOL_VERSION, REQUEST_TIMEOUT_SECS,
 };
 use anyhow::{bail, Context, Result};
 use mesh_llm_plugin::{MeshVisibility, STARTUP_DISABLED_ERROR_CODE};
-use rmcp::model::{
-    CallToolResult as McpCallToolResult, InitializeRequestParams, ListToolsResult,
-    PaginatedRequestParams, ServerInfo,
-};
+use rmcp::model::{InitializeRequestParams, ServerInfo};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -295,69 +292,11 @@ impl ExternalPlugin {
         *self.server_info.lock().await = Some(server_info.clone());
         *self.manifest.lock().await = init.manifest.clone();
 
-        let tools = if server_info.capabilities.tools.is_some() {
-            let response = self
-                .request_once(
-                    generation,
-                    outbound_tx.clone(),
-                    pending.clone(),
-                    proto::envelope::Payload::RpcRequest(proto::RpcRequest {
-                        method: "tools/list".into(),
-                        params_json: serialize_params(Option::<PaginatedRequestParams>::None)?,
-                    }),
-                )
-                .await;
-            match response {
-                Ok(envelope) => match envelope.payload {
-                    Some(proto::envelope::Payload::RpcResponse(resp)) => {
-                        let result: ListToolsResult = serde_json::from_str(&resp.result_json)
-                            .with_context(|| {
-                                format!(
-                                    "Plugin '{}' returned invalid result for 'tools/list'",
-                                    self.spec.name
-                                )
-                            })?;
-                        result
-                            .tools
-                            .into_iter()
-                            .map(|tool| ToolSummary {
-                                name: tool.name.to_string(),
-                                description: tool.description.unwrap_or_default().to_string(),
-                                input_schema_json: serde_json::to_string(
-                                    tool.input_schema.as_ref(),
-                                )
-                                .unwrap_or_else(|_| "{}".into()),
-                            })
-                            .collect()
-                    }
-                    Some(proto::envelope::Payload::ErrorResponse(err)) => {
-                        tracing::warn!(
-                            plugin = %self.spec.name,
-                            error = %plugin_error(&self.spec.name, "tools/list", &err),
-                            "Plugin tools/list failed during startup"
-                        );
-                        Vec::new()
-                    }
-                    _ => {
-                        tracing::warn!(
-                            plugin = %self.spec.name,
-                            "Plugin returned unexpected payload for tools/list during startup"
-                        );
-                        Vec::new()
-                    }
-                },
-                Err(err) => {
-                    tracing::warn!(
-                        plugin = %self.spec.name,
-                        error = %err,
-                        "Plugin tools/list request failed during startup"
-                    );
-                    Vec::new()
-                }
-            }
-        } else {
-            Vec::new()
-        };
+        let tools = init
+            .manifest
+            .as_ref()
+            .map(manifest_tool_summaries)
+            .unwrap_or_default();
         let mut summary = self.summary.lock().await;
         summary.status = "running".into();
         summary.version = Some(init.plugin_version);
@@ -405,23 +344,13 @@ impl ExternalPlugin {
     }
 
     pub(crate) async fn list_tools(&self) -> Result<Vec<ToolSummary>> {
-        let info = self.server_info().await?;
-        if info.capabilities.tools.is_none() {
-            return Ok(Vec::new());
-        }
-        let result: ListToolsResult = self
-            .mcp_request("tools/list", None::<PaginatedRequestParams>)
-            .await?;
-        Ok(result
-            .tools
-            .into_iter()
-            .map(|tool| ToolSummary {
-                name: tool.name.to_string(),
-                description: tool.description.unwrap_or_default().to_string(),
-                input_schema_json: serde_json::to_string(tool.input_schema.as_ref())
-                    .unwrap_or_else(|_| "{}".into()),
-            })
-            .collect())
+        Ok(self
+            .manifest
+            .lock()
+            .await
+            .clone()
+            .map(|manifest| manifest_tool_summaries(&manifest))
+            .unwrap_or_default())
     }
 
     pub(crate) async fn call_tool(
@@ -429,20 +358,40 @@ impl ExternalPlugin {
         tool_name: &str,
         arguments_json: &str,
     ) -> Result<ToolCallResult> {
-        let arguments = parse_optional_json(arguments_json)?;
-        let result: McpCallToolResult = self
-            .mcp_request(
-                "tools/call",
-                serde_json::json!({
-                    "name": tool_name,
-                    "arguments": arguments,
-                }),
-            )
+        let response = self
+            .invoke_service(proto::ServiceKind::Operation, tool_name, arguments_json)
             .await?;
         Ok(ToolCallResult {
-            content_json: normalize_tool_result_content(&result)?,
-            is_error: result.is_error.unwrap_or(false),
+            content_json: response.output_json,
+            is_error: response.is_error,
         })
+    }
+
+    pub(crate) async fn invoke_service(
+        &self,
+        kind: proto::ServiceKind,
+        service_name: &str,
+        input_json: &str,
+    ) -> Result<proto::InvokeServiceResponse> {
+        let response = self
+            .request(proto::envelope::Payload::InvokeServiceRequest(
+                proto::InvokeServiceRequest {
+                    kind: kind as i32,
+                    service_name: service_name.to_string(),
+                    input_json: input_json.to_string(),
+                },
+            ))
+            .await?;
+        match response.payload {
+            Some(proto::envelope::Payload::InvokeServiceResponse(resp)) => Ok(resp),
+            Some(proto::envelope::Payload::ErrorResponse(err)) => {
+                Err(plugin_error(&self.spec.name, "invoke_service", &err))
+            }
+            _ => bail!(
+                "Plugin '{}' returned an unexpected payload for 'invoke_service'",
+                self.spec.name
+            ),
+        }
     }
 
     pub(crate) async fn mcp_request<T, P>(&self, method: &str, params: P) -> Result<T>
@@ -687,14 +636,16 @@ impl ExternalPlugin {
     }
 }
 
-fn normalize_tool_result_content(result: &McpCallToolResult) -> Result<String> {
-    if let Some(value) = &result.structured_content {
-        return serde_json::to_string(value).map_err(Into::into);
-    }
-    if let Some(text) = result.content.first().and_then(|content| content.as_text()) {
-        return Ok(text.text.clone());
-    }
-    serde_json::to_string(&result.content).map_err(Into::into)
+fn manifest_tool_summaries(manifest: &proto::PluginManifest) -> Vec<ToolSummary> {
+    manifest
+        .operations
+        .iter()
+        .map(|operation| ToolSummary {
+            name: operation.name.clone(),
+            description: operation.description.clone(),
+            input_schema_json: operation.input_schema_json.clone(),
+        })
+        .collect()
 }
 
 fn proto_mesh_visibility(mesh_visibility: MeshVisibility) -> i32 {

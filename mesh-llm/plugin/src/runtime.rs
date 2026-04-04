@@ -7,6 +7,7 @@ use rmcp::model::{
     ReadResourceRequestParams, ReadResourceResult, ServerInfo, SetLevelRequestParams,
     SubscribeRequestParams, UnsubscribeRequestParams,
 };
+use serde::de::DeserializeOwned;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -346,6 +347,63 @@ pub trait Plugin: Send {
         Ok(None)
     }
 
+    async fn invoke_service(
+        &mut self,
+        request: proto::InvokeServiceRequest,
+        context: &mut PluginContext<'_>,
+    ) -> PluginResult<Option<proto::InvokeServiceResponse>> {
+        match proto::ServiceKind::try_from(request.kind).unwrap_or(proto::ServiceKind::Unspecified)
+        {
+            proto::ServiceKind::Operation => {
+                let arguments = parse_service_input::<serde_json::Value>(&request.input_json)?;
+                let tool_request = ToolCallRequest {
+                    name: request.service_name,
+                    arguments,
+                };
+                match self.call_tool(tool_request, context).await? {
+                    Some(result) => Ok(Some(proto::InvokeServiceResponse {
+                        output_json: normalize_call_tool_output(&result)?,
+                        is_error: result.is_error.unwrap_or(false),
+                    })),
+                    None => Ok(None),
+                }
+            }
+            proto::ServiceKind::Prompt => {
+                let params = parse_service_input::<GetPromptRequestParams>(&request.input_json)?;
+                match self.get_prompt(params, context).await? {
+                    Some(result) => Ok(Some(proto::InvokeServiceResponse {
+                        output_json: serialize_service_output(&result)?,
+                        is_error: false,
+                    })),
+                    None => Ok(None),
+                }
+            }
+            proto::ServiceKind::Resource => {
+                let params = parse_service_input::<ReadResourceRequestParams>(&request.input_json)?;
+                match self.read_resource(params, context).await? {
+                    Some(result) => Ok(Some(proto::InvokeServiceResponse {
+                        output_json: serialize_service_output(&result)?,
+                        is_error: false,
+                    })),
+                    None => Ok(None),
+                }
+            }
+            proto::ServiceKind::Completion => {
+                let params = parse_service_input::<CompleteRequestParams>(&request.input_json)?;
+                match self.complete(params, context).await? {
+                    Some(result) => Ok(Some(proto::InvokeServiceResponse {
+                        output_json: serialize_service_output(&result)?,
+                        is_error: false,
+                    })),
+                    None => Ok(None),
+                }
+            }
+            proto::ServiceKind::Unspecified => Err(PluginError::invalid_request(
+                "Service invocation kind is required",
+            )),
+        }
+    }
+
     async fn handle_rpc(
         &mut self,
         request: proto::RpcRequest,
@@ -566,7 +624,7 @@ pub trait Plugin: Send {
 
 pub struct SimplePlugin {
     metadata: PluginMetadata,
-    tool_router: Option<ToolRouter>,
+    operation_router: Option<ToolRouter>,
     prompt_router: Option<PromptRouter>,
     resource_router: Option<ResourceRouter>,
     completion_router: Option<CompletionRouter>,
@@ -590,7 +648,7 @@ impl SimplePlugin {
     pub fn new(metadata: PluginMetadata) -> Self {
         Self {
             metadata,
-            tool_router: None,
+            operation_router: None,
             prompt_router: None,
             resource_router: None,
             completion_router: None,
@@ -611,8 +669,8 @@ impl SimplePlugin {
         }
     }
 
-    pub fn with_tool_router(mut self, router: ToolRouter) -> Self {
-        self.tool_router = Some(router);
+    pub fn with_operation_router(mut self, router: ToolRouter) -> Self {
+        self.operation_router = Some(router);
         self
     }
 
@@ -873,7 +931,7 @@ impl Plugin for SimplePlugin {
         _context: &mut PluginContext<'_>,
     ) -> PluginResult<Option<ListToolsResult>> {
         Ok(self
-            .tool_router
+            .operation_router
             .as_ref()
             .map(|router| router.list_tools_result()))
     }
@@ -883,7 +941,7 @@ impl Plugin for SimplePlugin {
         request: ToolCallRequest,
         context: &mut PluginContext<'_>,
     ) -> PluginResult<Option<CallToolResult>> {
-        match &self.tool_router {
+        match &self.operation_router {
             Some(router) => Ok(Some(router.call(request, context).await?)),
             None => Ok(None),
         }
@@ -1226,6 +1284,36 @@ impl PluginRuntime {
                     )
                     .await?;
                 }
+                Some(proto::envelope::Payload::InvokeServiceRequest(request)) => {
+                    let payload = {
+                        let mut context = PluginContext {
+                            stream: &mut stream,
+                            plugin_id: &plugin_id,
+                        };
+                        match plugin.invoke_service(request, &mut context).await {
+                            Ok(Some(response)) => {
+                                proto::envelope::Payload::InvokeServiceResponse(response)
+                            }
+                            Ok(None) => proto::envelope::Payload::ErrorResponse(
+                                PluginError::method_not_found("Unsupported service invocation")
+                                    .into_error_response(),
+                            ),
+                            Err(err) => {
+                                proto::envelope::Payload::ErrorResponse(err.into_error_response())
+                            }
+                        }
+                    };
+                    write_envelope(
+                        &mut stream,
+                        &proto::Envelope {
+                            protocol_version: PROTOCOL_VERSION,
+                            plugin_id: plugin_id.clone(),
+                            request_id,
+                            payload: Some(payload),
+                        },
+                    )
+                    .await?;
+                }
                 Some(proto::envelope::Payload::RpcNotification(notification)) => {
                     let mut context = PluginContext {
                         stream: &mut stream,
@@ -1323,5 +1411,180 @@ impl PluginRuntime {
         }
 
         Ok(())
+    }
+}
+
+fn parse_service_input<T: DeserializeOwned>(input_json: &str) -> PluginResult<T> {
+    let input = if input_json.trim().is_empty() {
+        "null"
+    } else {
+        input_json
+    };
+    serde_json::from_str(input)
+        .map_err(|err| PluginError::invalid_params(format!("Invalid service input JSON: {err}")))
+}
+
+fn serialize_service_output<T: Serialize>(value: &T) -> PluginResult<String> {
+    serde_json::to_string(value)
+        .map_err(|err| PluginError::internal(format!("Serialize service output: {err}")))
+}
+
+fn normalize_call_tool_output(result: &CallToolResult) -> PluginResult<String> {
+    if let Some(value) = &result.structured_content {
+        return serialize_service_output(value);
+    }
+    if let Some(text) = result.content.first().and_then(|content| content.as_text()) {
+        return Ok(text.text.clone());
+    }
+    serialize_service_output(&result.content)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{mcp, plugin, plugin_server_info};
+    use rmcp::model::{
+        ArgumentInfo, PromptMessage, PromptMessageContent, PromptMessageRole, Reference,
+    };
+    use serde_json::json;
+
+    #[derive(Clone, Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
+    struct DemoArgs {
+        #[serde(default)]
+        message: String,
+    }
+
+    async fn disconnected_stream() -> LocalStream {
+        #[cfg(unix)]
+        {
+            let (client, _server) = tokio::net::UnixStream::pair().unwrap();
+            return LocalStream::Unix(client);
+        }
+        #[cfg(windows)]
+        {
+            panic!("runtime tests are only implemented for unix");
+        }
+    }
+
+    #[tokio::test]
+    async fn invoke_service_dispatches_operation_prompt_resource_and_completion() {
+        let mut plugin = plugin! {
+            metadata: PluginMetadata::new(
+                "demo",
+                "1.0.0",
+                plugin_server_info("demo", "1.0.0", "Demo", "Demo plugin", None::<String>),
+            ),
+            mcp: [
+                mcp::tool("echo")
+                    .description("Echo input")
+                    .input::<DemoArgs>()
+                    .handle(|args, _context| Box::pin(async move {
+                        Ok(json!({ "echo": args.message }))
+                    })),
+                mcp::resource("demo://state")
+                    .name("State")
+                    .handle(|request, _context| Box::pin(async move {
+                        Ok(crate::read_resource_result(vec![
+                            rmcp::model::ResourceContents::text("state", request.uri),
+                        ]))
+                    })),
+                mcp::prompt("brief")
+                    .description("Brief")
+                    .handle(|request, _context| Box::pin(async move {
+                        Ok(crate::get_prompt_result(vec![PromptMessage::new(
+                            PromptMessageRole::User,
+                            PromptMessageContent::text(format!("brief:{}", request.name)),
+                        )]))
+                    })),
+                mcp::completion("prompt.brief.topic")
+                    .handle(|_request, _context| Box::pin(async move {
+                        crate::complete_result(vec!["alpha".into()])
+                    })),
+            ],
+        };
+
+        let mut stream = disconnected_stream().await;
+        let mut context = PluginContext {
+            stream: &mut stream,
+            plugin_id: "demo",
+        };
+
+        let op = plugin
+            .invoke_service(
+                proto::InvokeServiceRequest {
+                    kind: proto::ServiceKind::Operation as i32,
+                    service_name: "echo".into(),
+                    input_json: json!({ "message": "hello" }).to_string(),
+                },
+                &mut context,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&op.output_json).unwrap(),
+            json!({"echo": "hello"})
+        );
+
+        let prompt = plugin
+            .invoke_service(
+                proto::InvokeServiceRequest {
+                    kind: proto::ServiceKind::Prompt as i32,
+                    service_name: "brief".into(),
+                    input_json: serde_json::to_string(&GetPromptRequestParams::new("brief"))
+                        .unwrap(),
+                },
+                &mut context,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let prompt_result: GetPromptResult = serde_json::from_str(&prompt.output_json).unwrap();
+        assert_eq!(prompt_result.messages.len(), 1);
+
+        let resource = plugin
+            .invoke_service(
+                proto::InvokeServiceRequest {
+                    kind: proto::ServiceKind::Resource as i32,
+                    service_name: "demo://state".into(),
+                    input_json: serde_json::to_string(&ReadResourceRequestParams::new(
+                        "demo://state",
+                    ))
+                    .unwrap(),
+                },
+                &mut context,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let resource_result: ReadResourceResult =
+            serde_json::from_str(&resource.output_json).unwrap();
+        assert_eq!(resource_result.contents.len(), 1);
+
+        let completion = plugin
+            .invoke_service(
+                proto::InvokeServiceRequest {
+                    kind: proto::ServiceKind::Completion as i32,
+                    service_name: "brief".into(),
+                    input_json: serde_json::to_string(&CompleteRequestParams::new(
+                        Reference::for_prompt("brief"),
+                        ArgumentInfo {
+                            name: "topic".into(),
+                            value: "a".into(),
+                        },
+                    ))
+                    .unwrap(),
+                },
+                &mut context,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let completion_result: CompleteResult =
+            serde_json::from_str(&completion.output_json).unwrap();
+        assert_eq!(
+            completion_result.completion.values,
+            vec![String::from("alpha")]
+        );
     }
 }

@@ -17,6 +17,7 @@ use rmcp::{
     ErrorData, RoleClient, RoleServer, ServerHandler, ServiceExt,
 };
 use serde::Serialize;
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use tokio::net::TcpStream;
@@ -65,6 +66,10 @@ struct PromptRef {
 
 #[derive(Clone)]
 enum ResourceTarget {
+    Plugin {
+        plugin_name: String,
+        resource_uri: String,
+    },
     External {
         endpoint: ExternalMcpEndpoint,
         original_uri: String,
@@ -493,15 +498,15 @@ impl PluginMcpServer {
 
     async fn discover_tools(&self) -> Result<BTreeMap<String, ToolRef>, ErrorData> {
         let mut tools = BTreeMap::new();
-        for (plugin_name, server_info) in self.plugin_manager.list_server_infos().await {
+        for (plugin_name, _) in self.plugin_manager.list_server_infos().await {
             let manifest = self
                 .plugin_manager
                 .manifest(&plugin_name)
                 .await
                 .map_err(internal_error)?;
-            if let Some(manifest) = manifest.filter(|manifest| !manifest.mcp_tools.is_empty()) {
-                for tool in &manifest.mcp_tools {
-                    let raw_name = tool.name.clone();
+            if let Some(manifest) = manifest.filter(|manifest| !manifest.operations.is_empty()) {
+                for operation in &manifest.operations {
+                    let raw_name = operation.name.clone();
                     for mcp_name in tool_aliases(&plugin_name, &raw_name) {
                         tools.insert(
                             mcp_name.clone(),
@@ -510,41 +515,10 @@ impl PluginMcpServer {
                                     plugin_name: plugin_name.clone(),
                                     tool_name: raw_name.clone(),
                                 },
-                                tool: stapler::mcp_tool(mcp_name, tool),
+                                tool: stapler::operation(mcp_name, operation),
                             },
                         );
                     }
-                }
-                continue;
-            }
-
-            if server_info.capabilities.tools.is_none() {
-                continue;
-            }
-            let result: ListToolsResult = self
-                .plugin_manager
-                .mcp_request(
-                    &plugin_name,
-                    "tools/list",
-                    Option::<PaginatedRequestParams>::None,
-                )
-                .await
-                .map_err(internal_error)?;
-            for tool in result.tools {
-                let raw_name = tool.name.to_string();
-                for mcp_name in tool_aliases(&plugin_name, &raw_name) {
-                    let mut namespaced = tool.clone();
-                    namespaced.name = mcp_name.clone().into();
-                    tools.insert(
-                        mcp_name.clone(),
-                        ToolRef {
-                            target: ToolTarget::Plugin {
-                                plugin_name: plugin_name.clone(),
-                                tool_name: raw_name.clone(),
-                            },
-                            tool: namespaced,
-                        },
-                    );
                 }
             }
         }
@@ -595,14 +569,14 @@ impl PluginMcpServer {
 
     async fn discover_prompts(&self) -> Result<BTreeMap<String, PromptRef>, ErrorData> {
         let mut prompts = BTreeMap::new();
-        for (plugin_name, server_info) in self.plugin_manager.list_server_infos().await {
+        for (plugin_name, _) in self.plugin_manager.list_server_infos().await {
             let manifest = self
                 .plugin_manager
                 .manifest(&plugin_name)
                 .await
                 .map_err(internal_error)?;
-            if let Some(manifest) = manifest.filter(|manifest| !manifest.mcp_prompts.is_empty()) {
-                for prompt in &manifest.mcp_prompts {
+            if let Some(manifest) = manifest.filter(|manifest| !manifest.prompts.is_empty()) {
+                for prompt in &manifest.prompts {
                     prompts.insert(
                         canonical_name(&plugin_name, &prompt.name),
                         PromptRef {
@@ -613,31 +587,6 @@ impl PluginMcpServer {
                         },
                     );
                 }
-                continue;
-            }
-
-            if server_info.capabilities.prompts.is_none() {
-                continue;
-            }
-            let result: ListPromptsResult = self
-                .plugin_manager
-                .mcp_request(
-                    &plugin_name,
-                    "prompts/list",
-                    Option::<PaginatedRequestParams>::None,
-                )
-                .await
-                .map_err(internal_error)?;
-            for prompt in result.prompts {
-                prompts.insert(
-                    canonical_name(&plugin_name, &prompt.name),
-                    PromptRef {
-                        target: PromptTarget::Plugin {
-                            plugin_name: plugin_name.clone(),
-                            prompt_name: prompt.name,
-                        },
-                    },
-                );
             }
         }
         for endpoint in self.active_external_mcp_endpoints().await? {
@@ -684,10 +633,28 @@ impl PluginMcpServer {
         self.bridge.set_peer(peer).await;
     }
 
-    async fn discover_external_resources(
-        &self,
-    ) -> Result<BTreeMap<String, ResourceRef>, ErrorData> {
+    async fn discover_resources(&self) -> Result<BTreeMap<String, ResourceRef>, ErrorData> {
         let mut resources = BTreeMap::new();
+        for (plugin_name, _) in self.plugin_manager.list_server_infos().await {
+            let manifest = self
+                .plugin_manager
+                .manifest(&plugin_name)
+                .await
+                .map_err(internal_error)?;
+            if let Some(manifest) = manifest.filter(|manifest| !manifest.resources.is_empty()) {
+                for resource in manifest.resources {
+                    resources.insert(
+                        resource.uri.clone(),
+                        ResourceRef {
+                            target: ResourceTarget::Plugin {
+                                plugin_name: plugin_name.clone(),
+                                resource_uri: resource.uri,
+                            },
+                        },
+                    );
+                }
+            }
+        }
         for endpoint in self.active_external_mcp_endpoints().await? {
             let client = match self.external_mcp.client_for(&endpoint).await {
                 Ok(client) => client,
@@ -790,21 +757,16 @@ impl ServerHandler for PluginMcpServer {
                 plugin_name,
                 tool_name,
             } => {
-                let mut params = CallToolRequestParams::new(tool_name.clone());
-                if let Some(arguments) = request.arguments {
-                    params = params.with_arguments(arguments);
-                }
-                if let Some(task) = request.task {
-                    params = params.with_task(task);
-                }
-                if let Some(meta) = request.meta {
-                    params.meta = Some(meta);
-                }
-
-                self.plugin_manager
-                    .mcp_request(plugin_name, "tools/call", params)
+                let arguments = request
+                    .arguments
+                    .map(Value::Object)
+                    .unwrap_or_else(|| serde_json::json!({}));
+                let result = self
+                    .plugin_manager
+                    .invoke_operation(plugin_name, tool_name, &arguments.to_string())
                     .await
-                    .map_err(internal_error)
+                    .map_err(internal_error)?;
+                Ok(operation_result_to_call_tool_result(result))
             }
             ToolTarget::External {
                 endpoint,
@@ -833,34 +795,16 @@ impl ServerHandler for PluginMcpServer {
     ) -> Result<ListPromptsResult, ErrorData> {
         self.refresh_peer(context.peer.clone()).await;
         let mut prompts = Vec::new();
-        for (plugin_name, server_info) in self.plugin_manager.list_server_infos().await {
+        for (plugin_name, _) in self.plugin_manager.list_server_infos().await {
             let manifest = self
                 .plugin_manager
                 .manifest(&plugin_name)
                 .await
                 .map_err(internal_error)?;
-            if let Some(manifest) = manifest.filter(|manifest| !manifest.mcp_prompts.is_empty()) {
-                prompts.extend(manifest.mcp_prompts.into_iter().map(|prompt| {
-                    stapler::mcp_prompt(canonical_name(&plugin_name, &prompt.name), &prompt)
+            if let Some(manifest) = manifest.filter(|manifest| !manifest.prompts.is_empty()) {
+                prompts.extend(manifest.prompts.into_iter().map(|prompt| {
+                    stapler::prompt(canonical_name(&plugin_name, &prompt.name), &prompt)
                 }));
-                continue;
-            }
-
-            if server_info.capabilities.prompts.is_none() {
-                continue;
-            }
-            let result: ListPromptsResult = self
-                .plugin_manager
-                .mcp_request(
-                    &plugin_name,
-                    "prompts/list",
-                    Option::<PaginatedRequestParams>::None,
-                )
-                .await
-                .map_err(internal_error)?;
-            for mut prompt in result.prompts {
-                prompt.name = canonical_name(&plugin_name, &prompt.name);
-                prompts.push(prompt);
             }
         }
         for endpoint in self.active_external_mcp_endpoints().await? {
@@ -928,7 +872,7 @@ impl ServerHandler for PluginMcpServer {
                 }
 
                 self.plugin_manager
-                    .mcp_request(plugin_name, "prompts/get", params)
+                    .get_prompt(plugin_name, prompt_name, params)
                     .await
                     .map_err(internal_error)
             }
@@ -956,30 +900,15 @@ impl ServerHandler for PluginMcpServer {
     ) -> Result<ListResourcesResult, ErrorData> {
         self.refresh_peer(context.peer.clone()).await;
         let mut resources = Vec::new();
-        for (plugin_name, server_info) in self.plugin_manager.list_server_infos().await {
+        for (plugin_name, _) in self.plugin_manager.list_server_infos().await {
             let manifest = self
                 .plugin_manager
                 .manifest(&plugin_name)
                 .await
                 .map_err(internal_error)?;
-            if let Some(manifest) = manifest.filter(|manifest| !manifest.mcp_resources.is_empty()) {
-                resources.extend(manifest.mcp_resources.iter().map(stapler::mcp_resource));
-                continue;
+            if let Some(manifest) = manifest.filter(|manifest| !manifest.resources.is_empty()) {
+                resources.extend(manifest.resources.iter().map(stapler::resource));
             }
-
-            if server_info.capabilities.resources.is_none() {
-                continue;
-            }
-            let result: ListResourcesResult = self
-                .plugin_manager
-                .mcp_request(
-                    &plugin_name,
-                    "resources/list",
-                    Option::<PaginatedRequestParams>::None,
-                )
-                .await
-                .map_err(internal_error)?;
-            resources.extend(result.resources);
         }
         for endpoint in self.active_external_mcp_endpoints().await? {
             let client = match self.external_mcp.client_for(&endpoint).await {
@@ -1026,37 +955,22 @@ impl ServerHandler for PluginMcpServer {
     ) -> Result<ListResourceTemplatesResult, ErrorData> {
         self.refresh_peer(context.peer.clone()).await;
         let mut resource_templates = Vec::new();
-        for (plugin_name, server_info) in self.plugin_manager.list_server_infos().await {
+        for (plugin_name, _) in self.plugin_manager.list_server_infos().await {
             let manifest = self
                 .plugin_manager
                 .manifest(&plugin_name)
                 .await
                 .map_err(internal_error)?;
             if let Some(manifest) =
-                manifest.filter(|manifest| !manifest.mcp_resource_templates.is_empty())
+                manifest.filter(|manifest| !manifest.resource_templates.is_empty())
             {
                 resource_templates.extend(
                     manifest
-                        .mcp_resource_templates
+                        .resource_templates
                         .iter()
-                        .map(stapler::mcp_resource_template),
+                        .map(stapler::resource_template),
                 );
-                continue;
             }
-
-            if server_info.capabilities.resources.is_none() {
-                continue;
-            }
-            let result: ListResourceTemplatesResult = self
-                .plugin_manager
-                .mcp_request(
-                    &plugin_name,
-                    "resources/templates/list",
-                    Option::<PaginatedRequestParams>::None,
-                )
-                .await
-                .map_err(internal_error)?;
-            resource_templates.extend(result.resource_templates);
         }
         for endpoint in self.active_external_mcp_endpoints().await? {
             let client = match self.external_mcp.client_for(&endpoint).await {
@@ -1103,13 +1017,22 @@ impl ServerHandler for PluginMcpServer {
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, ErrorData> {
         self.refresh_peer(context.peer.clone()).await;
-        if let Some(resource_ref) = self
-            .discover_external_resources()
-            .await?
-            .get(&request.uri)
-            .cloned()
-        {
+        if let Some(resource_ref) = self.discover_resources().await?.get(&request.uri).cloned() {
             match resource_ref.target {
+                ResourceTarget::Plugin {
+                    plugin_name,
+                    resource_uri,
+                } => {
+                    let mut params = ReadResourceRequestParams::new(resource_uri);
+                    if let Some(meta) = request.meta {
+                        params.meta = Some(meta);
+                    }
+                    return self
+                        .plugin_manager
+                        .read_resource(&plugin_name, &request.uri, params)
+                        .await
+                        .map_err(internal_error);
+                }
                 ResourceTarget::External {
                     endpoint,
                     original_uri,
@@ -1145,13 +1068,9 @@ impl ServerHandler for PluginMcpServer {
         context: RequestContext<RoleServer>,
     ) -> Result<(), ErrorData> {
         self.refresh_peer(context.peer.clone()).await;
-        if let Some(resource_ref) = self
-            .discover_external_resources()
-            .await?
-            .get(&request.uri)
-            .cloned()
-        {
+        if let Some(resource_ref) = self.discover_resources().await?.get(&request.uri).cloned() {
             match resource_ref.target {
+                ResourceTarget::Plugin { .. } => {}
                 ResourceTarget::External {
                     endpoint,
                     original_uri,
@@ -1174,13 +1093,9 @@ impl ServerHandler for PluginMcpServer {
         context: RequestContext<RoleServer>,
     ) -> Result<(), ErrorData> {
         self.refresh_peer(context.peer.clone()).await;
-        if let Some(resource_ref) = self
-            .discover_external_resources()
-            .await?
-            .get(&request.uri)
-            .cloned()
-        {
+        if let Some(resource_ref) = self.discover_resources().await?.get(&request.uri).cloned() {
             match resource_ref.target {
+                ResourceTarget::Plugin { .. } => {}
                 ResourceTarget::External {
                     endpoint,
                     original_uri,
@@ -1225,7 +1140,7 @@ impl ServerHandler for PluginMcpServer {
                     }
                     return self
                         .plugin_manager
-                        .mcp_request(plugin_name, "completion/complete", request)
+                        .complete(plugin_name, prompt_name, request)
                         .await
                         .map_err(internal_error);
                 }
@@ -1474,6 +1389,15 @@ where
     Err(internal_error(
         last_error.unwrap_or_else(|| anyhow!("No plugin handled '{method}'")),
     ))
+}
+
+fn operation_result_to_call_tool_result(result: plugin::ToolCallResult) -> CallToolResult {
+    let mut call_result = match serde_json::from_str::<Value>(&result.content_json) {
+        Ok(value) => CallToolResult::structured(value),
+        Err(_) => CallToolResult::success(vec![rmcp::model::Content::text(result.content_json)]),
+    };
+    call_result.is_error = Some(result.is_error);
+    call_result
 }
 
 fn tool_aliases(plugin_name: &str, tool_name: &str) -> Vec<String> {
@@ -1799,7 +1723,7 @@ mod tests {
         let prompts = server.discover_prompts().await.unwrap();
         assert!(prompts.contains_key("adapter.notes.brief"));
 
-        let resources = server.discover_external_resources().await.unwrap();
+        let resources = server.discover_resources().await.unwrap();
         assert!(resources.contains_key("mesh-mcp://adapter/notes/resource/note%3A%2F%2Fone"));
 
         let endpoint = server

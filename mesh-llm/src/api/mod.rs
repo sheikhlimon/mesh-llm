@@ -1377,7 +1377,7 @@ mod tests {
                     )));
                 }
 
-                let request: mesh_llm_plugin::ToolCallRequest = serde_json::from_str(&params_json)
+                let request: mesh_llm_plugin::OperationRequest = serde_json::from_str(&params_json)
                     .map_err(|err| Self::error_response(err.to_string()))?;
                 let result_json = match request.name.as_str() {
                     blobstore::PUT_REQUEST_OBJECT_TOOL => {
@@ -1451,7 +1451,7 @@ mod tests {
                     )));
                 }
 
-                let request: mesh_llm_plugin::ToolCallRequest = serde_json::from_str(&params_json)
+                let request: mesh_llm_plugin::OperationRequest = serde_json::from_str(&params_json)
                     .map_err(|err| Self::error_response(err.to_string()))?;
                 let result_json = match request.name.as_str() {
                     "feed" => {

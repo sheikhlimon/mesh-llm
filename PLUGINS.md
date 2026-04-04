@@ -49,26 +49,26 @@ The `stapler` is the host projection layer that turns plugin manifests into expo
 
 ## High-Level Model
 
-The plugin system is service-oriented rather than transport-oriented.
+The plugin system is projection-oriented at the DSL level and service-oriented at the runtime level.
 
-A plugin declares services such as:
+Plugin authors think in terms of the host surfaces they contribute to:
 
-- operations
-- resources
-- resource templates
-- prompts
-- completions
-- external service endpoints
-- mesh channels
-- named capabilities
+- `mcp`
+- `http`
+- `inference`
+- `provides`
 
-Those declarations are projected by the host `stapler` into:
+The host runtime still executes native service invocations internally, but the author-facing DSL is organized by the surface the plugin contributes to.
 
-- MCP tools, resources, prompts, and completions
-- HTTP routes
-- optional top-level product APIs backed by named capabilities
+This means:
 
-The plugin author writes handlers once. The host exposes them across surfaces.
+- local MCP tools, resources, prompts, and completions live under `mcp`
+- attached external MCP servers also live under `mcp`
+- local HTTP routes live under `http`
+- attached or plugin-hosted inference backends live under `inference`
+- stable product capabilities live under `provides`
+
+There is no separate top-level `services` section in the preferred DSL.
 
 ## Core Principles
 
@@ -123,13 +123,24 @@ The control session is used for:
 
 - plugin startup and manifest exchange
 - health checks
-- small request / response calls
+- native service invocation requests and responses
 - plugin-to-host notifications
 - host-to-plugin mesh events
 - opening and closing streams
 - cancellation and error reporting
 
 The control session should stay responsive even while the plugin is sending or receiving large payloads.
+
+The native runtime contract is service-oriented, not MCP-oriented.
+
+The host invokes services such as:
+
+- operations
+- prompts
+- resources
+- completions
+
+MCP method names like `tools/call` and `prompts/get` are projection-layer concerns. They are not the preferred host/plugin runtime contract.
 
 ### Streams
 
@@ -162,20 +173,16 @@ This architecture avoids that by separating:
 
 ## Manifest
 
-On startup, a plugin returns a manifest that declares what it provides.
+On startup, a plugin returns a manifest that declares what it provides to the host.
 
 Conceptually, the manifest contains:
 
 - plugin identity and version
-- operations
-- resources
-- resource templates
-- prompts
-- completions
-- external service endpoints
-- HTTP bindings
-- mesh channels
 - provided capabilities
+- MCP contributions
+- HTTP contributions
+- inference contributions
+- any mesh channel declarations the plugin needs
 
 The manifest is the source of truth for host projections.
 
@@ -183,59 +190,89 @@ The manifest is the source of truth for host projections.
 
 The primary design goal is very low boilerplate.
 
-The current author-facing manifest DSL is builder-based:
+The preferred DSL is surface-first:
+
+- `provides`
+- `mcp`
+- `http`
+- `inference`
+
+Each section is self-contained. If a plugin contributes something to a host surface, it is declared in the section for that surface.
+
+Example:
 
 ```rust
-fn manifest() -> mesh_llm_plugin::proto::PluginManifest {
-    mesh_llm_plugin::plugin_manifest![
-        capability("mesh-blackboard.v1"),
-        mcp_tool::<FeedArgs>("feed", "Read recent blackboard messages")
-            .title("Blackboard Feed"),
-        mcp_tool::<PostArgs>("post", "Post a blackboard message")
-            .title("Post Blackboard Message"),
-        http_get("/feed", "feed").request_schema::<FeedArgs>(),
-        http_post("/post", "post").request_schema::<PostArgs>(),
-    ]
-}
-```
+use mesh_llm_plugin::{
+    capability, plugin_server_info, PluginMetadata,
+    http::{get, post},
+    inference::openai_http,
+    mcp::{external_stdio, prompt, resource, tool},
+};
 
-That manifest DSL is the stable base layer.
-
-The current wrapper for simple plugins is `plugin! { ... }`:
-
-```rust
 let plugin = mesh_llm_plugin::plugin! {
     metadata: PluginMetadata::new(
-        "blackboard",
+        "notes",
         "1.0.0",
         plugin_server_info(
-            "blackboard",
+            "notes",
             "1.0.0",
-            "Blackboard",
-            "Mesh blackboard services",
+            "Notes",
+            "Shared notes services",
             None::<String>,
         ),
     ),
-    capabilities: [capability("blackboard.v1")],
+
+    provides: [
+        capability("notes.v1"),
+        capability("search.v1"),
+    ],
+
     mcp: [
-        mcp_tool::<FeedArgs>("feed", "Read recent blackboard messages"),
-        mcp_tool::<PostArgs>("post", "Post a blackboard message"),
+        tool("search")
+            .description("Search notes")
+            .input::<SearchArgs>()
+            .handle(search),
+
+        resource("notes://latest")
+            .name("Latest Notes")
+            .handle(read_latest),
+
+        prompt("summarize_notes")
+            .description("Summarize recent notes")
+            .handle(summarize_notes),
+
+        external_stdio("filesystem", "npx")
+            .arg("-y")
+            .arg("@modelcontextprotocol/server-filesystem"),
     ],
+
     http: [
-        http_get("/feed", "feed").request_schema::<FeedArgs>(),
-        http_post("/post", "post").request_schema::<PostArgs>(),
+        get("/search")
+            .description("Search notes")
+            .input::<SearchArgs>()
+            .handle(search),
+
+        post("/notes")
+            .description("Create a note")
+            .input::<PostArgs>()
+            .handle(post_note),
     ],
-    tool_router: tool_router(),
+
+    inference: [
+        openai_http("local-llm", "http://127.0.0.1:8080/v1")
+            .managed_by_plugin(false),
+    ],
 };
 ```
 
-`plugin! { ... }` composes:
+In this model:
 
-- plugin metadata
-- manifest sections
-- optional routers for tools, prompts, resources, completions, and tasks
+- `mcp` contains both local MCP contributions and attached external MCP servers
+- `http` contains local HTTP contributions
+- `inference` contains both attached external inference endpoints and plugin-hosted inference providers
+- `provides` declares stable capability contracts that core product routes can depend on
 
-The plugin author declares services and writes normal typed handlers. The runtime and `stapler` handle:
+The runtime and `stapler` handle:
 
 - schema exposure
 - MCP projection
@@ -243,6 +280,7 @@ The plugin author declares services and writes normal typed handlers. The runtim
 - request validation
 - stream negotiation
 - transport details
+- host-side routing and aggregation
 
 Plugin authors should not manually implement:
 
@@ -252,32 +290,66 @@ Plugin authors should not manually implement:
 - HTTP routing
 - control-plane socket negotiation
 
+### Streaming
+
+Streaming is explicit in the DSL.
+
+For HTTP bindings, the preferred modifiers are:
+
+- `.stream_request()`
+- `.stream_response()`
+- `.sse()`
+
+These declare whether the request body, response body, or response format requires side-stream transport.
+
 ## External Endpoints
 
-Plugins may also register service endpoints.
+Plugins may register external services without proxying all traffic through the plugin process.
 
 This is a control-plane declaration, not a request proxying requirement.
 
-In this design, a plugin may tell `mesh-llm`:
+In practice:
 
-- an inference endpoint exists
-- an MCP endpoint exists
-- how to reach it
-- how to health check it
-- optionally how to start and stop it
+- attached external MCP servers are declared in the `mcp` section
+- attached or plugin-hosted inference backends are declared in the `inference` section
 
-`mesh-llm` then talks to that endpoint directly when appropriate.
+`mesh-llm` then talks to those services directly when appropriate.
 
 This keeps heavy data-plane traffic out of plugin IPC.
 
-An endpoint may be either:
+### MCP Contributions
 
-- an attached external service discovered or managed by the plugin
-- a plugin-hosted service served by the plugin itself
+The `mcp` section may contain both:
+
+- local MCP-facing items implemented by the plugin
+- attached external MCP servers
+
+Preferred external forms include:
+
+- `external_stdio(...)`
+- `external_http(...)`
+- `external_tcp(...)`
+- `external_unix_socket(...)`
+
+External MCP names are namespaced as:
+
+- `plugin_name.method`
+
+### Inference Contributions
+
+The `inference` section may contain both:
+
+- attached external OpenAI-compatible endpoints
+- plugin-hosted inference providers
+
+Preferred forms include:
+
+- `openai_http(...)` for attached external endpoints
+- `provider(...)` for plugin-hosted backends
 
 ### Why Endpoint Registration Exists
 
-Some services already speak a protocol that `mesh-llm` knows how to use.
+Some services already speak a protocol that `mesh-llm` knows how to use directly.
 
 Examples:
 
@@ -285,92 +357,14 @@ Examples:
 - an external MCP server reachable over stdio, streamable HTTP, Unix socket, named pipe, or TCP
 - a plugin-hosted inference runtime such as an MLX-backed local server
 
-In these cases, the plugin should not need to proxy all traffic through itself. It should be able to register the service with the host and remain the control-plane owner for:
+In these cases, the plugin should remain the control-plane owner for:
 
 - discovery
 - lifecycle
 - readiness
 - availability
 
-For plugin-hosted endpoints, the same contract still applies. The only difference is that the plugin is also the owner of the serving endpoint.
-
-### Endpoint DSL
-
-The current builder form is:
-
-```rust
-fn manifest() -> mesh_llm_plugin::proto::PluginManifest {
-    mesh_llm_plugin::plugin_manifest![
-        openai_http_inference_endpoint("mlx", "http://127.0.0.1:8091")
-            .managed_by_plugin(true),
-        mcp_stdio_endpoint("filesystem", "npx")
-            .arg("-y")
-            .arg("@modelcontextprotocol/server-filesystem")
-            .namespace("filesystem"),
-        mcp_unix_socket_endpoint("notes", "/tmp/notes-mcp.sock")
-            .namespace("notes"),
-        mcp_http_endpoint("remote", "http://127.0.0.1:9000/mcp")
-            .namespace("remote"),
-        mcp_tcp_endpoint("debug", "127.0.0.1:9100")
-            .namespace("debug"),
-    ]
-}
-```
-
-That builder layer is what bundled plugins use today. A higher-level `plugin! { endpoints: [...] }` macro can layer on later without changing the host contract.
-
-For very common cases, a more declarative wrapper can still sit on top:
-
-```rust
-plugin! {
-    name: "adapters",
-    version: env!("CARGO_PKG_VERSION"),
-
-    endpoints: [
-        inference_endpoint("vllm")
-            .openai_http("http://127.0.0.1:8000")
-            .health(http_get("/health"))
-            .discover_models(from_openai_models()),
-
-        mcp_endpoint("fetch")
-            .stdio(command("uvx").arg("mcp-server-fetch"))
-            .namespace("fetch")
-            .health(inherit_connection()),
-    ],
-}
-```
-
-### Inference Endpoints
-
-An inference endpoint is a service that `mesh-llm` can call directly using its inference proxy logic.
-
-The plugin is not the inference data path. The plugin is the adapter that describes or manages the endpoint.
-
-This means:
-
-- plugin IPC handles registration, lifecycle, and health
-- `mesh-llm` sends `/v1/*` traffic directly to the registered endpoint
-- streaming responses do not pass through the plugin process
-
-This is the preferred model for:
-
-- attached external OpenAI-compatible inference servers, such as Lemonade
-- plugin-hosted inference servers, such as an MLX runtime plugin serving its own local endpoint
-
-MLX is the canonical example of the plugin-hosted case. It is a better reference than Lemonade for backends where the plugin itself owns lifecycle and serving.
-
-### MCP Endpoints
-
-An MCP endpoint is a service that `mesh-llm` can connect to directly and aggregate into its own MCP surface.
-
-Again, the plugin is the control-plane owner, not the transport proxy.
-
-This means:
-
-- the plugin declares where the MCP server is
-- `mesh-llm` connects to it directly
-- `mesh-llm` may namespace and aggregate its tools, resources, prompts, and completions
-- the plugin remains responsible for lifecycle and availability metadata
+But `mesh-llm` should own the data plane when possible.
 
 ### Health And Availability
 
@@ -439,7 +433,7 @@ The plugin author marks which services should appear in MCP:
 
 - `tool(...)`
 - `resource(...)`
-- `resource_template(...)`
+- `resource_template_service(...)`
 - `prompt(...)`
 - `completion(...)`
 

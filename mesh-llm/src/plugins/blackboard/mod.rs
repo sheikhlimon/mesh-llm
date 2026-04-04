@@ -7,8 +7,8 @@ pub mod mcp;
 
 use anyhow::Result;
 use mesh_llm_plugin::{
-    capability, http_get, http_post, json_schema_tool, mcp_tool, plugin_server_info,
-    PluginMetadata, PluginRuntime, PluginStartupPolicy, SimplePlugin, ToolRouter,
+    capability, http_get, http_post, json_schema_operation, operation, plugin_server_info,
+    OperationRouter, PluginMetadata, PluginRuntime, PluginStartupPolicy, SimplePlugin,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -305,12 +305,12 @@ pub(crate) async fn run_plugin(name: String) -> anyhow::Result<()> {
     PluginRuntime::run(build_blackboard_plugin(name)).await
 }
 
-fn tool_router(store: BlackboardStore) -> ToolRouter {
-    let mut router = ToolRouter::new();
+fn operation_router(store: BlackboardStore) -> OperationRouter {
+    let mut router = OperationRouter::new();
 
     let feed_store = store.clone();
     router.add_json_default::<FeedRequest, Vec<BlackboardItem>, _>(
-        json_schema_tool::<FeedRequest>("feed", "Read the recent blackboard feed."),
+        json_schema_operation::<FeedRequest>("feed", "Read the recent blackboard feed."),
         move |request, _context| {
             let store = feed_store.clone();
             Box::pin(async move {
@@ -323,7 +323,7 @@ fn tool_router(store: BlackboardStore) -> ToolRouter {
 
     let search_store = store.clone();
     router.add_json::<SearchRequest, Vec<BlackboardItem>, _>(
-        json_schema_tool::<SearchRequest>("search", "Search blackboard messages."),
+        json_schema_operation::<SearchRequest>("search", "Search blackboard messages."),
         move |request, _context| {
             let store = search_store.clone();
             Box::pin(async move {
@@ -335,7 +335,7 @@ fn tool_router(store: BlackboardStore) -> ToolRouter {
     );
 
     router.add_json::<PostRequest, BlackboardItem, _>(
-        json_schema_tool::<PostRequest>("post", "Post a blackboard message."),
+        json_schema_operation::<PostRequest>("post", "Post a blackboard message."),
         move |request, context| {
             let store = store.clone();
             Box::pin(async move {
@@ -375,11 +375,11 @@ fn blackboard_manifest() -> mesh_llm_plugin::proto::PluginManifest {
     mesh_llm_plugin::plugin_manifest![
         capability("channel:blackboard"),
         capability("blackboard.v1"),
-        mcp_tool::<FeedRequest>("feed", "Read recent blackboard messages.")
+        operation::<FeedRequest>("feed", "Read recent blackboard messages.")
             .title("Blackboard Feed"),
-        mcp_tool::<SearchRequest>("search", "Search blackboard messages by keyword.")
+        operation::<SearchRequest>("search", "Search blackboard messages by keyword.")
             .title("Blackboard Search"),
-        mcp_tool::<PostRequest>("post", "Post a new blackboard message.")
+        operation::<PostRequest>("post", "Post a new blackboard message.")
             .title("Post Blackboard Message"),
         http_get("/feed", "feed").request_schema::<FeedRequest>(),
         http_get("/search", "search").request_schema::<SearchRequest>(),
@@ -411,7 +411,7 @@ fn build_blackboard_plugin(name: String) -> SimplePlugin {
         .with_manifest(blackboard_manifest())
         .with_startup_policy(PluginStartupPolicy::PrivateMeshOnly),
     )
-    .with_tool_router(tool_router(store))
+    .with_operation_router(operation_router(store))
     .with_health(move |_context| {
         let store = health_store.clone();
         Box::pin(async move { Ok(format!("items={}", store.all().await.len())) })

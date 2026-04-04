@@ -4,11 +4,11 @@ use schemars::JsonSchema;
 #[derive(Clone, Debug)]
 pub enum ManifestEntry {
     Capability(String),
-    McpTool(proto::McpToolManifest),
-    McpResource(proto::McpResourceManifest),
-    McpResourceTemplate(proto::McpResourceTemplateManifest),
-    McpPrompt(proto::McpPromptManifest),
-    McpCompletion(proto::McpCompletionManifest),
+    Operation(proto::OperationManifest),
+    Resource(proto::ResourceManifest),
+    ResourceTemplate(proto::ResourceTemplateManifest),
+    Prompt(proto::PromptManifest),
+    Completion(proto::CompletionManifest),
     HttpBinding(proto::HttpBindingManifest),
     Endpoint(proto::EndpointManifest),
 }
@@ -32,17 +32,21 @@ impl PluginManifestBuilder {
         self.manifest
     }
 
+    pub fn push_item<T: Into<ManifestEntry>>(&mut self, item: T) {
+        self.push(item.into());
+    }
+
     fn push(&mut self, item: ManifestEntry) {
         match item {
             ManifestEntry::Capability(capability) => self.manifest.capabilities.push(capability),
-            ManifestEntry::McpTool(tool) => self.manifest.mcp_tools.push(tool),
-            ManifestEntry::McpResource(resource) => self.manifest.mcp_resources.push(resource),
-            ManifestEntry::McpResourceTemplate(template) => {
-                self.manifest.mcp_resource_templates.push(template);
+            ManifestEntry::Operation(operation) => self.manifest.operations.push(operation),
+            ManifestEntry::Resource(resource) => self.manifest.resources.push(resource),
+            ManifestEntry::ResourceTemplate(template) => {
+                self.manifest.resource_templates.push(template);
             }
-            ManifestEntry::McpPrompt(prompt) => self.manifest.mcp_prompts.push(prompt),
-            ManifestEntry::McpCompletion(completion) => {
-                self.manifest.mcp_completions.push(completion);
+            ManifestEntry::Prompt(prompt) => self.manifest.prompts.push(prompt),
+            ManifestEntry::Completion(completion) => {
+                self.manifest.completions.push(completion);
             }
             ManifestEntry::HttpBinding(binding) => self.manifest.http_bindings.push(binding),
             ManifestEntry::Endpoint(endpoint) => self.manifest.endpoints.push(endpoint),
@@ -59,16 +63,16 @@ pub fn capability(name: impl Into<String>) -> ManifestEntry {
 }
 
 #[derive(Clone, Debug)]
-pub struct McpToolBuilder {
-    inner: proto::McpToolManifest,
+pub struct OperationBuilder {
+    inner: proto::OperationManifest,
 }
 
-pub fn mcp_tool<Input: JsonSchema>(
+pub fn operation<Input: JsonSchema>(
     name: impl Into<String>,
     description: impl Into<String>,
-) -> McpToolBuilder {
-    McpToolBuilder {
-        inner: proto::McpToolManifest {
+) -> OperationBuilder {
+    OperationBuilder {
+        inner: proto::OperationManifest {
             name: name.into(),
             description: description.into(),
             input_schema_json: schema_json::<Input>(),
@@ -78,7 +82,7 @@ pub fn mcp_tool<Input: JsonSchema>(
     }
 }
 
-impl McpToolBuilder {
+impl OperationBuilder {
     pub fn title(mut self, title: impl Into<String>) -> Self {
         self.inner.title = Some(title.into());
         self
@@ -90,20 +94,20 @@ impl McpToolBuilder {
     }
 }
 
-impl From<McpToolBuilder> for ManifestEntry {
-    fn from(value: McpToolBuilder) -> Self {
-        Self::McpTool(value.inner)
+impl From<OperationBuilder> for ManifestEntry {
+    fn from(value: OperationBuilder) -> Self {
+        Self::Operation(value.inner)
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct McpResourceBuilder {
-    inner: proto::McpResourceManifest,
+pub struct ResourceBuilder {
+    inner: proto::ResourceManifest,
 }
 
-pub fn mcp_resource(uri: impl Into<String>, name: impl Into<String>) -> McpResourceBuilder {
-    McpResourceBuilder {
-        inner: proto::McpResourceManifest {
+pub fn resource(uri: impl Into<String>, name: impl Into<String>) -> ResourceBuilder {
+    ResourceBuilder {
+        inner: proto::ResourceManifest {
             uri: uri.into(),
             name: name.into(),
             description: None,
@@ -112,7 +116,7 @@ pub fn mcp_resource(uri: impl Into<String>, name: impl Into<String>) -> McpResou
     }
 }
 
-impl McpResourceBuilder {
+impl ResourceBuilder {
     pub fn description(mut self, description: impl Into<String>) -> Self {
         self.inner.description = Some(description.into());
         self
@@ -124,23 +128,23 @@ impl McpResourceBuilder {
     }
 }
 
-impl From<McpResourceBuilder> for ManifestEntry {
-    fn from(value: McpResourceBuilder) -> Self {
-        Self::McpResource(value.inner)
+impl From<ResourceBuilder> for ManifestEntry {
+    fn from(value: ResourceBuilder) -> Self {
+        Self::Resource(value.inner)
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct McpResourceTemplateBuilder {
-    inner: proto::McpResourceTemplateManifest,
+pub struct ResourceTemplateBuilder {
+    inner: proto::ResourceTemplateManifest,
 }
 
-pub fn mcp_resource_template(
+pub fn resource_template_service(
     uri_template: impl Into<String>,
     name: impl Into<String>,
-) -> McpResourceTemplateBuilder {
-    McpResourceTemplateBuilder {
-        inner: proto::McpResourceTemplateManifest {
+) -> ResourceTemplateBuilder {
+    ResourceTemplateBuilder {
+        inner: proto::ResourceTemplateManifest {
             uri_template: uri_template.into(),
             name: name.into(),
             description: None,
@@ -149,7 +153,7 @@ pub fn mcp_resource_template(
     }
 }
 
-impl McpResourceTemplateBuilder {
+impl ResourceTemplateBuilder {
     pub fn description(mut self, description: impl Into<String>) -> Self {
         self.inner.description = Some(description.into());
         self
@@ -161,63 +165,63 @@ impl McpResourceTemplateBuilder {
     }
 }
 
-impl From<McpResourceTemplateBuilder> for ManifestEntry {
-    fn from(value: McpResourceTemplateBuilder) -> Self {
-        Self::McpResourceTemplate(value.inner)
+impl From<ResourceTemplateBuilder> for ManifestEntry {
+    fn from(value: ResourceTemplateBuilder) -> Self {
+        Self::ResourceTemplate(value.inner)
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct McpPromptBuilder {
-    inner: proto::McpPromptManifest,
+pub struct PromptBuilder {
+    inner: proto::PromptManifest,
 }
 
-pub fn mcp_prompt(name: impl Into<String>) -> McpPromptBuilder {
-    McpPromptBuilder {
-        inner: proto::McpPromptManifest {
+pub fn prompt_service(name: impl Into<String>) -> PromptBuilder {
+    PromptBuilder {
+        inner: proto::PromptManifest {
             name: name.into(),
             description: None,
         },
     }
 }
 
-impl McpPromptBuilder {
+impl PromptBuilder {
     pub fn description(mut self, description: impl Into<String>) -> Self {
         self.inner.description = Some(description.into());
         self
     }
 }
 
-impl From<McpPromptBuilder> for ManifestEntry {
-    fn from(value: McpPromptBuilder) -> Self {
-        Self::McpPrompt(value.inner)
+impl From<PromptBuilder> for ManifestEntry {
+    fn from(value: PromptBuilder) -> Self {
+        Self::Prompt(value.inner)
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct McpCompletionBuilder {
-    inner: proto::McpCompletionManifest,
+pub struct CompletionBuilder {
+    inner: proto::CompletionManifest,
 }
 
-pub fn mcp_completion(argument_ref: impl Into<String>) -> McpCompletionBuilder {
-    McpCompletionBuilder {
-        inner: proto::McpCompletionManifest {
+pub fn completion(argument_ref: impl Into<String>) -> CompletionBuilder {
+    CompletionBuilder {
+        inner: proto::CompletionManifest {
             argument_ref: argument_ref.into(),
             description: None,
         },
     }
 }
 
-impl McpCompletionBuilder {
+impl CompletionBuilder {
     pub fn description(mut self, description: impl Into<String>) -> Self {
         self.inner.description = Some(description.into());
         self
     }
 }
 
-impl From<McpCompletionBuilder> for ManifestEntry {
-    fn from(value: McpCompletionBuilder) -> Self {
-        Self::McpCompletion(value.inner)
+impl From<CompletionBuilder> for ManifestEntry {
+    fn from(value: CompletionBuilder) -> Self {
+        Self::Completion(value.inner)
     }
 }
 
@@ -499,16 +503,16 @@ fn default_binding_id(path: &str, operation_name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{plugin_server_info, Plugin, PluginMetadata, ToolRouter};
+    use crate::{inference, mcp, plugin_server_info, Plugin, PluginMetadata};
 
     #[allow(dead_code)]
-    #[derive(schemars::JsonSchema)]
+    #[derive(serde::Deserialize, schemars::JsonSchema)]
     struct DemoInput {
         value: String,
     }
 
     #[allow(dead_code)]
-    #[derive(schemars::JsonSchema)]
+    #[derive(serde::Serialize, schemars::JsonSchema)]
     struct DemoOutput {
         echoed: String,
     }
@@ -517,7 +521,7 @@ mod tests {
     fn macro_builds_manifest_entries() {
         let manifest = crate::plugin_manifest![
             capability("demo.v1"),
-            mcp_tool::<DemoInput>("echo", "Echo input").title("Echo"),
+            operation::<DemoInput>("echo", "Echo input").title("Echo"),
             http_post("/echo", "echo")
                 .request_schema::<DemoInput>()
                 .response_schema::<DemoOutput>(),
@@ -525,7 +529,7 @@ mod tests {
         ];
 
         assert_eq!(manifest.capabilities, vec!["demo.v1"]);
-        assert_eq!(manifest.mcp_tools.len(), 1);
+        assert_eq!(manifest.operations.len(), 1);
         assert_eq!(manifest.http_bindings.len(), 1);
         assert_eq!(manifest.endpoints.len(), 1);
         assert_eq!(manifest.http_bindings[0].binding_id, "echo");
@@ -559,18 +563,83 @@ mod tests {
                 "1.0.0",
                 plugin_server_info("demo", "1.0.0", "Demo", "Demo plugin", None::<String>),
             ),
-            capabilities: [capability("demo.v1")],
-            mcp: [mcp_tool::<DemoInput>("echo", "Echo input")],
-            http: [http_post("/echo", "echo").request_schema::<DemoInput>()],
-            endpoints: [mcp_stdio_endpoint("stdio", "demo-mcp")],
-            tool_router: ToolRouter::new(),
+            provides: [capability("demo.v1")],
+            mcp: [
+                mcp::tool("echo")
+                    .description("Echo input")
+                    .input::<DemoInput>()
+                    .handle(|args, _context| Box::pin(async move {
+                        Ok(DemoOutput { echoed: args.value })
+                    })),
+                mcp::external_stdio("stdio", "demo-mcp"),
+            ],
+            http: [
+                crate::http::post("/echo")
+                    .description("Echo input")
+                    .input::<DemoInput>()
+                    .output::<DemoOutput>()
+                    .handle(|args, _context| Box::pin(async move {
+                        Ok(DemoOutput { echoed: args.value })
+                    })),
+            ],
+            inference: [
+                inference::openai_http("local", "http://127.0.0.1:8080/v1"),
+            ],
         };
 
         let manifest = plugin.manifest().expect("manifest");
         assert_eq!(plugin.capabilities(), vec!["demo.v1"]);
         assert_eq!(manifest.capabilities, vec!["demo.v1"]);
-        assert_eq!(manifest.mcp_tools.len(), 1);
+        assert_eq!(manifest.operations.len(), 2);
         assert_eq!(manifest.http_bindings.len(), 1);
-        assert_eq!(manifest.endpoints.len(), 1);
+        assert_eq!(manifest.endpoints.len(), 2);
+    }
+
+    #[test]
+    fn declarative_macro_builds_local_mcp_entries() {
+        let plugin = crate::plugin! {
+            metadata: PluginMetadata::new(
+                "demo",
+                "1.0.0",
+                plugin_server_info("demo", "1.0.0", "Demo", "Demo plugin", None::<String>),
+            ),
+            provides: [capability("demo.v1")],
+            mcp: [
+                mcp::tool("echo")
+                    .description("Echo input")
+                    .input::<DemoInput>()
+                    .handle(|args, _context| Box::pin(async move {
+                        Ok(DemoOutput { echoed: args.value })
+                    })),
+                mcp::resource("demo://snapshot")
+                    .name("Snapshot")
+                    .handle(|request, _context| Box::pin(async move {
+                        Ok(crate::read_resource_result(vec![
+                            rmcp::model::ResourceContents::text("snapshot", request.uri),
+                        ]))
+                    })),
+                mcp::prompt("brief")
+                    .description("Brief prompt")
+                    .handle(|request, _context| Box::pin(async move {
+                        Ok(crate::get_prompt_result(vec![
+                            rmcp::model::PromptMessage::new(
+                                rmcp::model::PromptMessageRole::User,
+                                rmcp::model::PromptMessageContent::text(request.name),
+                            ),
+                        ]))
+                    })),
+                mcp::completion("prompt.brief.topic")
+                    .description("Topic completion")
+                    .handle(|_request, _context| Box::pin(async move {
+                        crate::complete_result(vec!["alpha".into()])
+                    })),
+            ],
+        };
+
+        let manifest = plugin.manifest().expect("manifest");
+        assert_eq!(manifest.operations.len(), 1);
+        assert_eq!(manifest.resources.len(), 1);
+        assert_eq!(manifest.prompts.len(), 1);
+        assert_eq!(manifest.completions.len(), 1);
     }
 }

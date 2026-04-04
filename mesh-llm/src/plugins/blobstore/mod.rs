@@ -1,9 +1,9 @@
 use anyhow::{bail, Context, Result};
 use base64::Engine;
 use mesh_llm_plugin::{
-    async_trait, capability, json_response, json_schema_tool, list_tools, parse_rpc_params,
-    structured_tool_result, Plugin, PluginContext, PluginError, PluginResult, PluginRpcResult,
-    PluginRuntime, ToolCallRequest,
+    async_trait, capability, json_response, json_schema_operation, list_tools, parse_rpc_params,
+    structured_tool_result, OperationRequest, Plugin, PluginContext, PluginError, PluginResult,
+    PluginRpcResult, PluginRuntime,
 };
 use rand::Rng;
 use rmcp::model::{
@@ -571,26 +571,26 @@ impl BlobstorePlugin {
 
     fn list_blobstore_tools(&self) -> ListToolsResult {
         list_tools(vec![
-            json_schema_tool::<PutRequestObjectRequest>(
+            json_schema_operation::<PutRequestObjectRequest>(
                 PUT_REQUEST_OBJECT_TOOL,
                 "Store a request-scoped object and return a retrieval token.",
             ),
-            json_schema_tool::<GetRequestObjectRequest>(
+            json_schema_operation::<GetRequestObjectRequest>(
                 GET_REQUEST_OBJECT_TOOL,
                 "Fetch a previously stored request-scoped object by token.",
             ),
-            json_schema_tool::<FinishRequestRequest>(
+            json_schema_operation::<FinishRequestRequest>(
                 COMPLETE_REQUEST_TOOL,
                 "Remove all request-scoped objects for a completed request.",
             ),
-            json_schema_tool::<FinishRequestRequest>(
+            json_schema_operation::<FinishRequestRequest>(
                 ABORT_REQUEST_TOOL,
                 "Remove all request-scoped objects for an aborted request.",
             ),
         ])
     }
 
-    fn call_blobstore_tool(&self, request: ToolCallRequest) -> PluginResult<CallToolResult> {
+    fn call_blobstore_tool(&self, request: OperationRequest) -> PluginResult<CallToolResult> {
         match request.name.as_str() {
             PUT_REQUEST_OBJECT_TOOL => {
                 let params: PutRequestObjectRequest = request.arguments()?;
@@ -659,7 +659,7 @@ impl Plugin for BlobstorePlugin {
 
     async fn call_tool(
         &mut self,
-        request: ToolCallRequest,
+        request: OperationRequest,
         _context: &mut PluginContext<'_>,
     ) -> PluginResult<Option<CallToolResult>> {
         Ok(Some(self.call_blobstore_tool(request)?))

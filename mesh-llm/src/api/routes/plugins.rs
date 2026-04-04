@@ -167,7 +167,7 @@ async fn handle_call(
         let payload = if body.trim().is_empty() { "{}" } else { body };
         let plugin_manager = state.inner.lock().await.plugin_manager.clone();
         match plugin_manager
-            .call_tool(plugin_name, tool_name, payload)
+            .invoke_operation(plugin_name, tool_name, payload)
             .await
         {
             Ok(result) if !result.is_error => {
@@ -257,7 +257,7 @@ async fn handle_stapled_http(
     };
 
     match plugin_manager
-        .call_tool(
+        .invoke_operation(
             plugin_name,
             operation_name,
             &Value::Object(args).to_string(),
