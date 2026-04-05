@@ -407,8 +407,8 @@ fn strip_quant_suffix(stem: &str) -> &str {
 fn extract_quant_suffix(stem: &str) -> Option<String> {
     let stripped = strip_quant_suffix(stem);
     if stripped.len() < stem.len() {
-        // +1 to skip the '-' separator between base and quant
-        Some(stem[stripped.len() + 1..].to_string())
+        // +1 to skip the '-' separator; use .get() for safe UTF-8 slicing
+        stem.get(stripped.len() + 1..).map(|s| s.to_string())
     } else {
         None
     }
@@ -417,7 +417,7 @@ fn extract_quant_suffix(stem: &str) -> Option<String> {
 /// Return the sole candidate from `candidates` whose lowercased filename
 /// contains `quant`, or `None` if zero or multiple candidates match.
 fn pick_quant_match(candidates: &[PathBuf], quant: &str) -> Option<PathBuf> {
-    let matches: Vec<_> = candidates
+    let mut matches: Vec<_> = candidates
         .iter()
         .filter(|path| {
             path.file_stem()
@@ -428,7 +428,7 @@ fn pick_quant_match(candidates: &[PathBuf], quant: &str) -> Option<PathBuf> {
         .cloned()
         .collect();
     if matches.len() == 1 {
-        Some(matches.into_iter().next().unwrap())
+        matches.pop()
     } else {
         None
     }
