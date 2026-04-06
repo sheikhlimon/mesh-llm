@@ -22,23 +22,31 @@ pub(crate) fn run_init(
         None => default_keystore_path()?,
     };
 
-    if keystore_exists(&path) && !force {
+    let existing_keystore = keystore_exists(&path);
+    if existing_keystore && !force {
         bail!(
             "Owner keystore already exists at {}\nUse --force to overwrite.",
             path.display()
         );
     }
 
-    let (passphrase, source): (Option<Zeroizing<String>>, PassphraseSource) = if no_passphrase {
-        (None, PassphraseSource::None)
-    } else if keychain {
-        if !crate::crypto::keychain_available() {
+    let keychain_available = crate::crypto::keychain_available();
+    let use_keychain = if keychain {
+        if !keychain_available {
             bail!(
                 "No OS keychain backend is available on this host.\n\
                  Retry without --keychain to set a passphrase, or with --no-passphrase \
                  to store keys unencrypted."
             );
         }
+        true
+    } else {
+        should_default_to_keychain(existing_keystore, no_passphrase, keychain_available)
+    };
+
+    let (passphrase, source): (Option<Zeroizing<String>>, PassphraseSource) = if no_passphrase {
+        (None, PassphraseSource::None)
+    } else if use_keychain {
         let account = keychain_account_for_path(&path);
         // Capture any existing keychain entry so we can roll back cleanly if
         // the keystore write fails after we overwrite it.
@@ -105,7 +113,9 @@ pub(crate) fn run_init(
     eprintln!("Encrypted:       {}", if encrypted { "yes" } else { "no" });
     match &source {
         PassphraseSource::Keychain { account, .. } => {
-            eprintln!("Unlock:          OS keychain (service={KEYCHAIN_SERVICE}, account={account})");
+            eprintln!(
+                "Unlock:          OS keychain (service={KEYCHAIN_SERVICE}, account={account})"
+            );
         }
         PassphraseSource::Prompt => {
             eprintln!("Unlock:          passphrase prompt");
@@ -282,6 +292,14 @@ fn generate_random_passphrase() -> String {
     base64::engine::general_purpose::STANDARD_NO_PAD.encode(bytes)
 }
 
+fn should_default_to_keychain(
+    existing_keystore: bool,
+    no_passphrase: bool,
+    keychain_available: bool,
+) -> bool {
+    !existing_keystore && !no_passphrase && keychain_available
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,12 +338,35 @@ mod tests {
         assert_eq!(a.len(), DEFAULT_OWNER_ACCOUNT.len() + 1 + 16);
     }
 
+    #[test]
+    fn defaults_to_keychain_for_new_keystore_when_available() {
+        assert!(should_default_to_keychain(false, false, true));
+    }
+
+    #[test]
+    fn does_not_default_to_keychain_for_existing_keystore() {
+        assert!(!should_default_to_keychain(true, false, true));
+    }
+
+    #[test]
+    fn does_not_default_to_keychain_when_unavailable() {
+        assert!(!should_default_to_keychain(false, false, false));
+    }
+
+    #[test]
+    fn does_not_default_to_keychain_with_no_passphrase() {
+        assert!(!should_default_to_keychain(false, true, true));
+    }
+
     #[cfg(windows)]
     #[test]
     fn account_name_is_case_insensitive_on_windows() {
         let lower = keychain_account_for_path(Path::new(r"C:\tmp\Owner\keystore.json"));
         let upper = keychain_account_for_path(Path::new(r"C:\TMP\OWNER\KEYSTORE.JSON"));
-        assert_eq!(lower, upper, "NTFS paths differing only in case must hash the same");
+        assert_eq!(
+            lower, upper,
+            "NTFS paths differing only in case must hash the same"
+        );
     }
 
     #[cfg(not(windows))]
@@ -333,7 +374,10 @@ mod tests {
     fn account_name_is_case_sensitive_on_unix() {
         let lower = keychain_account_for_path(Path::new("/tmp/owner/keystore.json"));
         let upper = keychain_account_for_path(Path::new("/tmp/OWNER/KEYSTORE.JSON"));
-        assert_ne!(lower, upper, "POSIX paths differing in case must not collide");
+        assert_ne!(
+            lower, upper,
+            "POSIX paths differing in case must not collide"
+        );
     }
 
     #[test]
@@ -347,10 +391,8 @@ mod tests {
         // Use a path whose parent is a FILE rather than a directory. That
         // makes the save_keystore call fail at create_dir_all, triggering
         // our rollback logic.
-        let tmp_dir = std::env::temp_dir().join(format!(
-            "mesh-llm-force-rollback-{}",
-            rand::random::<u64>()
-        ));
+        let tmp_dir =
+            std::env::temp_dir().join(format!("mesh-llm-force-rollback-{}", rand::random::<u64>()));
         std::fs::create_dir_all(&tmp_dir).unwrap();
         let blocking_file = tmp_dir.join("blocker");
         std::fs::write(&blocking_file, b"not a directory").unwrap();
@@ -368,7 +410,10 @@ mod tests {
         // bad_path is a regular file. Our rollback should restore the
         // previous secret we seeded.
         let result = run_init(Some(bad_path.clone()), true, false, true);
-        assert!(result.is_err(), "run_init must fail when save cannot succeed");
+        assert!(
+            result.is_err(),
+            "run_init must fail when save cannot succeed"
+        );
 
         let restored = crate::crypto::keychain_get(KEYCHAIN_SERVICE, &account).unwrap();
         assert_eq!(
@@ -390,10 +435,8 @@ mod tests {
             return;
         }
 
-        let tmp_dir = std::env::temp_dir().join(format!(
-            "mesh-llm-fresh-rollback-{}",
-            rand::random::<u64>()
-        ));
+        let tmp_dir =
+            std::env::temp_dir().join(format!("mesh-llm-fresh-rollback-{}", rand::random::<u64>()));
         std::fs::create_dir_all(&tmp_dir).unwrap();
         let blocking_file = tmp_dir.join("blocker");
         std::fs::write(&blocking_file, b"not a directory").unwrap();
@@ -405,7 +448,10 @@ mod tests {
         crate::crypto::keychain_delete(KEYCHAIN_SERVICE, &account).ok();
 
         let result = run_init(Some(bad_path.clone()), false, false, true);
-        assert!(result.is_err(), "run_init must fail when save cannot succeed");
+        assert!(
+            result.is_err(),
+            "run_init must fail when save cannot succeed"
+        );
 
         let residual = crate::crypto::keychain_get(KEYCHAIN_SERVICE, &account).unwrap();
         assert_eq!(
@@ -418,7 +464,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn init_with_keychain_then_load_round_trip() {
+    fn init_defaults_to_keychain_then_load_round_trip() {
         if !crate::crypto::keychain_available() {
             eprintln!("keychain backend unavailable, skipping");
             return;
@@ -426,20 +472,21 @@ mod tests {
 
         // Use a unique temp path per run so tests can be repeated / run in
         // parallel without stomping each other.
-        let dir = std::env::temp_dir().join(format!(
-            "mesh-llm-keychain-rt-{}",
-            rand::random::<u64>()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("mesh-llm-keychain-rt-{}", rand::random::<u64>()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("owner-keystore.json");
 
-        run_init(Some(path.clone()), false, false, true)
-            .expect("auth init --keychain should succeed");
+        run_init(Some(path.clone()), false, false, false)
+            .expect("auth init should default to keychain when available");
 
         // Keystore file exists and is encrypted.
         assert!(path.exists(), "keystore file should exist");
         let info = keystore_metadata(&path).unwrap();
-        assert!(info.encrypted, "keystore should be encrypted when using keychain");
+        assert!(
+            info.encrypted,
+            "keystore should be encrypted when using keychain"
+        );
 
         // Keychain has an entry for this path's account.
         let account = keychain_account_for_path(&path);

@@ -18,8 +18,9 @@ pub(crate) enum AuthCommand {
         #[arg(long, conflicts_with = "keychain")]
         no_passphrase: bool,
         /// Store a random unlock passphrase in the OS keychain (macOS Keychain,
-        /// Windows Credential Manager, Linux Secret Service) instead of
-        /// prompting. The keystore file stays on disk and remains portable.
+        /// Windows Credential Manager, Linux Secret Service). New keystores
+        /// already default to this when a backend is available; use this flag
+        /// to force it when overwriting an existing keystore.
         #[arg(long)]
         keychain: bool,
     },
