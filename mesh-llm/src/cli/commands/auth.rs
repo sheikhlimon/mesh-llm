@@ -201,6 +201,13 @@ fn encrypted_keystore_keychain_status(error: OwnerKeychainLoadError) -> String {
         OwnerKeychainLoadError::Crypto(crate::crypto::CryptoError::KeychainUnavailable {
             reason,
         }) => format!("Keystore:        encrypted (keychain unavailable: {reason})"),
+        OwnerKeychainLoadError::Crypto(crate::crypto::CryptoError::KeychainAccessDenied {
+            reason,
+        }) => format!(
+            "Keystore:        encrypted (keychain is locked or access was denied: {reason}; \
+             unlock the keychain and retry, or provide the passphrase when the owner keystore \
+             is consumed)"
+        ),
         OwnerKeychainLoadError::Crypto(e) => format!("Keystore:        ERROR loading keys: {e}"),
     }
 }

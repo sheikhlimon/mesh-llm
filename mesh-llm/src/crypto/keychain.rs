@@ -171,8 +171,13 @@ pub fn load_owner_keypair_from_keychain(
 }
 
 fn map_err(e: keyring::Error) -> CryptoError {
-    CryptoError::KeychainUnavailable {
-        reason: e.to_string(),
+    match e {
+        keyring::Error::NoStorageAccess(err) => CryptoError::KeychainAccessDenied {
+            reason: err.to_string(),
+        },
+        other => CryptoError::KeychainUnavailable {
+            reason: other.to_string(),
+        },
     }
 }
 

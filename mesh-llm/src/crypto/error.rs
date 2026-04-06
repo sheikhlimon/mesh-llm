@@ -26,6 +26,9 @@ pub enum CryptoError {
     #[error("OS keychain unavailable: {reason}")]
     KeychainUnavailable { reason: String },
 
+    #[error("OS keychain access denied: {reason}")]
+    KeychainAccessDenied { reason: String },
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
