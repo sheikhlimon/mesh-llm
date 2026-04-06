@@ -132,12 +132,17 @@ pub fn save_keystore_with_keychain(
     } else {
         None
     };
+    // Snapshot any existing keychain entry so rollback is symmetric: if
+    // set_secret partially modifies or clears the entry before failing, we
+    // restore the original secret (or delete the entry if there was none).
+    let previous_keychain = get_secret(KEYCHAIN_SERVICE, &account)?;
     let generated = Zeroizing::new(generate_random_passphrase());
 
     save_keystore(path, keypair, Some(generated.as_str()), overwrite)?;
 
     if let Err(err) = set_secret(KEYCHAIN_SERVICE, &account, generated.as_str()) {
         let _ = rollback_keystore(path, previous_keystore.as_deref());
+        let _ = rollback_keychain_secret(KEYCHAIN_SERVICE, &account, previous_keychain.as_deref());
         return Err(err);
     }
 
@@ -183,6 +188,24 @@ fn rollback_keystore(path: &Path, previous_keystore: Option<&[u8]>) -> Result<()
             if path.exists() {
                 std::fs::remove_file(path)?;
             }
+            Ok(())
+        }
+    }
+}
+
+/// Restore a keychain entry to its previous state.
+///
+/// If `previous` is `Some`, the secret is written back; if `None`, the entry
+/// is deleted so no orphan is left behind.
+fn rollback_keychain_secret(
+    service: &str,
+    account: &str,
+    previous: Option<&str>,
+) -> Result<(), CryptoError> {
+    match previous {
+        Some(secret) => set_secret(service, account, secret),
+        None => {
+            delete_secret(service, account)?;
             Ok(())
         }
     }

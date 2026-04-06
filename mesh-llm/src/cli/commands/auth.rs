@@ -29,9 +29,8 @@ pub(crate) fn run_init(
         );
     }
 
-    let keychain_available = crate::crypto::keychain_available();
     let use_keychain = if keychain {
-        if !keychain_available {
+        if !crate::crypto::keychain_available() {
             bail!(
                 "No OS keychain backend is available on this host.\n\
                  Retry without --keychain to set a passphrase, or with --no-passphrase \
@@ -40,7 +39,14 @@ pub(crate) fn run_init(
         }
         true
     } else {
-        should_default_to_keychain(existing_keystore, no_passphrase, keychain_available)
+        // Only probe the OS keychain when it could possibly be used: new
+        // keystore and passphrase flow. Probing unconditionally would trigger
+        // D-Bus round-trips on Linux even when --no-passphrase is set or when
+        // we are overwriting an existing keystore (neither of which can
+        // default to keychain).
+        let available =
+            (!existing_keystore && !no_passphrase) && crate::crypto::keychain_available();
+        should_default_to_keychain(existing_keystore, no_passphrase, available)
     };
 
     let keypair = OwnerKeypair::generate();
