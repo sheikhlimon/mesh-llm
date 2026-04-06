@@ -189,6 +189,13 @@ jobs:
             llama.cpp/build/bin \
             ~/.models/$MOE_MODEL_FILE
 
+      - name: MoE mesh test (expert sharding end-to-end)
+        run: |
+          scripts/ci-moe-mesh-test.sh \
+            target/release/mesh-llm \
+            llama.cpp/build/bin \
+            ~/.models/$MOE_MODEL_FILE
+
       - name: CLI smoke test
         run: |
           target/release/mesh-llm --version
@@ -306,6 +313,13 @@ jobs:
       - name: MoE split test (expert sharding)
         run: |
           scripts/ci-moe-split-test.sh \
+            llama.cpp/build/bin \
+            ~/.models/$MOE_MODEL_FILE
+
+      - name: MoE mesh test (expert sharding end-to-end)
+        run: |
+          scripts/ci-moe-mesh-test.sh \
+            target/release/mesh-llm \
             llama.cpp/build/bin \
             ~/.models/$MOE_MODEL_FILE
 
