@@ -1,5 +1,6 @@
 use anyhow::Result;
 
+#[cfg(windows)]
 use crate::inference::launch;
 use crate::mesh;
 use crate::network::nostr;
@@ -96,9 +97,29 @@ pub(crate) async fn run_discover(
 pub(crate) fn run_stop() -> Result<()> {
     let mut killed = 0u32;
     for name in &["llama-server", "rpc-server", "mesh-llm"] {
-        if launch::terminate_process_by_name(name) {
-            eprintln!("🧹 Stopped {name}");
-            killed += 1;
+        // Use pkill to terminate processes by name
+        #[cfg(windows)]
+        {
+            let image = launch::platform_bin_name(name);
+            if std::process::Command::new("taskkill")
+                .args(["/IM", &image])
+                .status()
+                .is_ok_and(|status| status.success())
+            {
+                eprintln!("🧹 Stopped {name}");
+                killed += 1;
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            if std::process::Command::new("pkill")
+                .args(["-f", name])
+                .status()
+                .is_ok_and(|status| status.success())
+            {
+                eprintln!("🧹 Stopped {name}");
+                killed += 1;
+            }
         }
     }
     if killed == 0 {

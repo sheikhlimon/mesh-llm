@@ -48,6 +48,7 @@ hf-hub = { git = "https://github.com/i386/hf-hub.git", rev = "a123ed91f20317d117
 [dev-dependencies]
 axum = "0.8"
 serial_test = "3"
+tempfile = "3"
 
 [build-dependencies]
 prost-build = "0.14"
