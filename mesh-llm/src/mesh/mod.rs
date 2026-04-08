@@ -9317,28 +9317,32 @@ async fn load_or_create_key() -> Result<SecretKey> {
 }
 
 async fn load_or_create_key_at(dir: &std::path::Path) -> Result<SecretKey> {
-    ensure_private_identity_dir(dir)?;
-    let key_path = dir.join("key");
+    let dir = dir.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        ensure_private_identity_dir(&dir)?;
+        let key_path = dir.join("key");
 
-    if key_path.exists() {
-        ensure_private_identity_file(&key_path)?;
-        let hex = tokio::fs::read_to_string(&key_path).await?;
-        let bytes = hex::decode(hex.trim())?;
-        if bytes.len() != 32 {
-            anyhow::bail!("Invalid key length in {}", key_path.display());
+        if key_path.exists() {
+            ensure_private_identity_file(&key_path)?;
+            let hex = std::fs::read_to_string(&key_path)?;
+            let bytes = hex::decode(hex.trim())?;
+            if bytes.len() != 32 {
+                anyhow::bail!("Invalid key length in {}", key_path.display());
+            }
+            let key = SecretKey::from_bytes(&bytes.try_into().unwrap());
+            tracing::info!("Loaded key from {}", key_path.display());
+            return Ok(key);
         }
-        let key = SecretKey::from_bytes(&bytes.try_into().unwrap());
-        tracing::info!("Loaded key from {}", key_path.display());
-        return Ok(key);
-    }
 
-    let key = SecretKey::generate(&mut rand::rng());
-    crate::crypto::write_keystore_bytes_atomically(
-        &key_path,
-        hex::encode(key.to_bytes()).as_bytes(),
-    )?;
-    tracing::info!("Generated new key, saved to {}", key_path.display());
-    Ok(key)
+        let key = SecretKey::generate(&mut rand::rng());
+        crate::crypto::write_keystore_bytes_atomically(
+            &key_path,
+            hex::encode(key.to_bytes()).as_bytes(),
+        )?;
+        tracing::info!("Generated new key, saved to {}", key_path.display());
+        Ok(key)
+    })
+    .await?
 }
 
 #[cfg(unix)]
@@ -9365,7 +9369,10 @@ fn ensure_private_identity_dir(dir: &std::path::Path) -> Result<()> {
 fn ensure_private_identity_file(path: &std::path::Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
-    let metadata = std::fs::metadata(path)?;
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() {
+        anyhow::bail!("Key path {} is not a regular file", path.display());
+    }
     let mut perms = metadata.permissions();
     if perms.mode() & 0o077 != 0 {
         perms.set_mode(0o600);
@@ -9424,6 +9431,25 @@ mod private_key_tests {
             std::fs::metadata(&key_path).unwrap().permissions().mode() & 0o777,
             0o600
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn load_or_create_key_at_rejects_symlink_key() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = temp_mesh_dir("mesh-llm-node-key-symlink");
+        std::fs::create_dir_all(&dir).unwrap();
+        let key_path = dir.join("key");
+        let real_file = dir.join("key.real");
+        std::fs::write(&real_file, hex::encode([7u8; 32])).unwrap();
+        std::fs::set_permissions(&real_file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::os::unix::fs::symlink(&real_file, &key_path).unwrap();
+
+        let result = load_or_create_key_at(&dir).await;
+        assert!(result.is_err(), "expected error for symlinked key file");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

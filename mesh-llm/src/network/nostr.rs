@@ -148,7 +148,10 @@ fn ensure_private_nostr_dir(dir: &std::path::Path) -> Result<()> {
 fn ensure_private_nostr_key_file(path: &std::path::Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
-    let metadata = std::fs::metadata(path)?;
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() {
+        anyhow::bail!("Nostr key path {} is not a regular file", path.display());
+    }
     let mut perms = metadata.permissions();
     if perms.mode() & 0o077 != 0 {
         perms.set_mode(0o600);
@@ -1727,6 +1730,27 @@ mod key_file_tests {
             std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o600
         );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_or_create_keys_at_rejects_symlink_key() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = temp_key_path("mesh-llm-nostr-key-symlink");
+        let dir = path.parent().unwrap();
+        std::fs::create_dir_all(dir).unwrap();
+        let real_file = dir.join("nostr.real");
+        let keys = Keys::generate();
+        let nsec = keys.secret_key().to_bech32().unwrap();
+        std::fs::write(&real_file, &nsec).unwrap();
+        std::fs::set_permissions(&real_file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::os::unix::fs::symlink(&real_file, &path).unwrap();
+
+        let result = load_or_create_keys_at(&path);
+        assert!(result.is_err(), "expected error for symlinked nostr key");
 
         let _ = std::fs::remove_dir_all(dir);
     }

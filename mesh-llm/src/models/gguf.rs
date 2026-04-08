@@ -100,7 +100,12 @@ fn read_gguf_string(f: &mut std::fs::File) -> std::io::Result<String> {
     let len = read_bounded_len(f, MAX_GGUF_STRING_BYTES, "string")?;
     let mut buf = vec![0u8; len];
     f.read_exact(&mut buf)?;
-    Ok(String::from_utf8_lossy(&buf).to_string())
+    String::from_utf8(buf).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "invalid UTF-8 in GGUF string",
+        )
+    })
 }
 
 fn skip_gguf_value(f: &mut std::fs::File, typ: GgufType) -> std::io::Result<()> {
