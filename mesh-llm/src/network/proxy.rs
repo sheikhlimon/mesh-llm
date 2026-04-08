@@ -2007,13 +2007,26 @@ pub async fn handle_mesh_request(
         }
     }
 
-    // Resolve target hosts by model name, fall back to any host
+    // Resolve target hosts by model name
     let target_hosts = if let Some(ref name) = effective_model {
         node.hosts_for_model(name).await
     } else {
         vec![]
     };
-    let target_hosts = if target_hosts.is_empty() {
+    let target_hosts = if target_hosts.is_empty() && effective_model.is_some() {
+        // Named model requested but no host serves it — tell the agent to retry.
+        let model = effective_model.as_deref().unwrap();
+        tracing::warn!("API proxy: model {model:?} not available, no hosts serving it");
+        let _ = send_error(
+            tcp_stream,
+            429,
+            &format!("model {model:?} not currently available — retry later"),
+        )
+        .await;
+        release_request_objects(&node, &request.request_object_request_ids).await;
+        return;
+    } else if target_hosts.is_empty() {
+        // No model specified and no hosts at all
         match node.any_host().await {
             Some(p) => vec![p.id],
             None => {
@@ -2531,11 +2544,17 @@ pub async fn send_error(mut stream: TcpStream, code: u16, msg: &str) -> std::io:
         404 => "Not Found",
         409 => "Conflict",
         422 => "Unprocessable Content",
+        429 => "Too Many Requests",
         _ => "Bad Request",
     };
     let body = serde_json::json!({"error": msg}).to_string();
+    let retry_after = if code == 429 {
+        "Retry-After: 5\r\n"
+    } else {
+        ""
+    };
     let resp = format!(
-        "HTTP/1.1 {code} {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+        "HTTP/1.1 {code} {status}\r\nContent-Type: application/json\r\n{retry_after}Content-Length: {}\r\n\r\n{}",
         body.len(), body
     );
     stream.write_all(resp.as_bytes()).await?;
