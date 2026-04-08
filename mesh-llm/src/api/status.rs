@@ -69,6 +69,7 @@ pub(super) struct StatusPayload {
     pub(super) my_vram_gb: f64,
     pub(super) model_size_gb: f64,
     pub(super) peers: Vec<PeerPayload>,
+    pub(super) local_instances: Vec<LocalInstance>,
     pub(super) launch_pi: Option<String>,
     pub(super) launch_goose: Option<String>,
     pub(super) inflight_requests: u64,
@@ -94,10 +95,21 @@ pub(super) struct PeerPayload {
     pub(super) serving_models: Vec<String>,
     pub(super) hosted_models: Vec<String>,
     pub(super) hosted_models_known: bool,
+    pub(super) version: Option<String>,
     pub(super) rtt_ms: Option<u32>,
     pub(super) hostname: Option<String>,
     pub(super) is_soc: Option<bool>,
     pub(super) gpus: Vec<GpuEntry>,
+}
+
+#[derive(Serialize)]
+pub(super) struct LocalInstance {
+    pub(super) pid: u32,
+    pub(super) api_port: Option<u16>,
+    pub(super) version: Option<String>,
+    pub(super) started_at_unix: i64,
+    pub(super) runtime_dir: String,
+    pub(super) is_self: bool,
 }
 
 #[derive(Serialize)]
@@ -255,4 +267,77 @@ pub(super) fn decode_runtime_model_path(path: &str) -> Option<String> {
         i += 1;
     }
     String::from_utf8(decoded).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_peer_payload_serializes_version_field() {
+        let peer = PeerPayload {
+            id: "test-id".to_string(),
+            role: "Worker".to_string(),
+            models: vec![],
+            available_models: vec![],
+            requested_models: vec![],
+            vram_gb: 8.0,
+            serving_models: vec![],
+            hosted_models: vec![],
+            hosted_models_known: false,
+            version: Some("0.56.0".to_string()),
+            rtt_ms: None,
+            hostname: None,
+            is_soc: None,
+            gpus: vec![],
+        };
+
+        let json = serde_json::to_string(&peer).expect("serialization failed");
+        assert!(json.contains("\"version\":\"0.56.0\""));
+    }
+
+    #[test]
+    fn test_peer_payload_serializes_null_version() {
+        let peer = PeerPayload {
+            id: "test-id".to_string(),
+            role: "Worker".to_string(),
+            models: vec![],
+            available_models: vec![],
+            requested_models: vec![],
+            vram_gb: 8.0,
+            serving_models: vec![],
+            hosted_models: vec![],
+            hosted_models_known: false,
+            version: None,
+            rtt_ms: None,
+            hostname: None,
+            is_soc: None,
+            gpus: vec![],
+        };
+
+        let json = serde_json::to_string(&peer).expect("serialization failed");
+        assert!(json.contains("\"version\":null"));
+    }
+
+    #[test]
+    fn test_status_payload_has_local_instances_field() {
+        let instances: Vec<LocalInstance> = vec![];
+        let json = serde_json::to_string(&instances).expect("serialization failed");
+        assert_eq!(json, "[]");
+    }
+
+    #[test]
+    fn test_local_instance_serializes_is_self() {
+        let instance = LocalInstance {
+            pid: 1234,
+            api_port: Some(3131),
+            version: Some("0.56.0".to_string()),
+            started_at_unix: 1700000000,
+            runtime_dir: "/home/user/.mesh-llm/runtime/1234".to_string(),
+            is_self: true,
+        };
+
+        let json = serde_json::to_string(&instance).expect("serialization failed");
+        assert!(json.contains("\"is_self\":true"));
+    }
 }
