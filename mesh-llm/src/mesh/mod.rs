@@ -4662,6 +4662,8 @@ impl Node {
 
     async fn remove_peer(&self, id: EndpointId) {
         let mut state = self.state.lock().await;
+        // Always clear any rejection-tracking entry so the map stays bounded.
+        state.policy_rejected_peers.remove(&id);
         if let Some(peer) = state.peers.remove(&id) {
             tracing::info!(
                 "Peer removed: {} (total: {})",
