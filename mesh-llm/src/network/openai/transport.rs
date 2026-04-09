@@ -1080,17 +1080,17 @@ async fn probe_http_response<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Res
 }
 
 /// Like `probe_http_response` but with a much longer timeout suitable for
-/// local llama-server connections. Prefill on a busy or slow machine can
-/// legitimately take minutes (large prompts, concurrent slot contention,
-/// slower hardware). We still bound the wait to catch a truly wedged
-/// llama-server process.
+/// the local backend proxy (which fronts llama-server). Prefill on a busy
+/// or slow machine can legitimately take minutes (large prompts,
+/// concurrent slot contention, slower hardware). We still bound the wait
+/// to catch a truly wedged local backend proxy path.
 async fn probe_http_response_local<R: AsyncRead + Unpin>(reader: &mut R) -> Result<ResponseProbe> {
     probe_http_response_with_timeout(reader, local_response_first_byte_timeout()).await
 }
 
-/// Local llama-server timeout: 10 minutes. This is a safety net for a
-/// wedged process, not a latency budget. Normal prefill even on slow
-/// hardware with large prompts and concurrent slots completes well
+/// Local backend proxy timeout: 10 minutes. This is a safety net for a
+/// wedged local proxy path, not a latency budget. Normal prefill even on
+/// slow hardware with large prompts and concurrent slots completes well
 /// within this window.
 fn local_response_first_byte_timeout() -> Duration {
     Duration::from_secs(10 * 60)
