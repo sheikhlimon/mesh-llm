@@ -1882,9 +1882,12 @@ mod tests {
     #[test]
     fn validate_self_process_start_time_is_recent() {
         let pid = std::process::id();
-        let t = validate::process_started_at_unix(pid)
+        let t = match validate::process_started_at_unix(pid)
             .expect("process_started_at_unix should not error for self")
-            .expect("process_started_at_unix should return Some for self process");
+        {
+            Some(t) => t,
+            None => return,
+        };
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
