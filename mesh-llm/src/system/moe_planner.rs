@@ -378,10 +378,14 @@ async fn resolve_best_ranking(
         if !path.exists() {
             bail!("Ranking file not found: {}", path.display());
         }
+        let metadata_path = sibling_metadata_path(path);
+        let analyzer_id = infer_analyzer_from_ranking_path(path)
+            .unwrap_or("override")
+            .to_string();
         return Ok(ResolvedRanking {
             path: path.to_path_buf(),
-            metadata_path: None,
-            analyzer_id: "override".to_string(),
+            metadata_path,
+            analyzer_id,
             source: RankingSource::Override,
             reason: "explicit --ranking-file override".to_string(),
         });

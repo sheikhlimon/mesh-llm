@@ -585,10 +585,38 @@ fn resolve_runtime_moe_config(
     let started = std::time::Instant::now();
     let (ranking, ranking_source, ranking_origin) = match options.ranking_strategy {
         moe::MoeRankingStrategy::Auto => {
-            let resolved_ranking = match crate::system::moe_planner::resolve_runtime_ranking(
-                model_path,
-                crate::system::moe_planner::DEFAULT_MOE_RANKINGS_DATASET,
-            ) {
+            let model_path_for_ranking = model_path.to_path_buf();
+            let resolved_ranking_result: anyhow::Result<
+                Option<crate::system::moe_planner::ResolvedRanking>,
+            > = match tokio::runtime::Handle::try_current() {
+                Ok(handle) => match tokio::task::block_in_place(|| {
+                    handle.block_on(tokio::task::spawn_blocking(move || {
+                        crate::system::moe_planner::resolve_runtime_ranking(
+                            &model_path_for_ranking,
+                            crate::system::moe_planner::DEFAULT_MOE_RANKINGS_DATASET,
+                        )
+                    }))
+                }) {
+                    Ok(Ok(resolved)) => Ok(resolved),
+                    Ok(Err(err)) => {
+                        eprintln!(
+                            "⚠ [{model_name}] Failed to resolve shared MoE ranking ({err}); falling back to local analysis or sequential expert order"
+                        );
+                        Ok(None)
+                    }
+                    Err(err) => {
+                        eprintln!(
+                            "⚠ [{model_name}] Failed to join shared MoE ranking resolver ({err}); falling back to local analysis or sequential expert order"
+                        );
+                        Ok(None)
+                    }
+                },
+                Err(_) => crate::system::moe_planner::resolve_runtime_ranking(
+                    model_path,
+                    crate::system::moe_planner::DEFAULT_MOE_RANKINGS_DATASET,
+                ),
+            };
+            let resolved_ranking = match resolved_ranking_result {
                 Ok(resolved) => resolved,
                 Err(err) => {
                     eprintln!(
@@ -617,18 +645,11 @@ fn resolve_runtime_moe_config(
             } else {
                 if should_attempt_local_micro_analyze(model_path, model_name, local_vram_budget) {
                     match ensure_micro_analyze_ranking(bin_dir, model_name, model_path, options) {
-                        Ok(artifact) => {
-                            print_runtime_submit_suggestion(
-                                model_name,
-                                model_path,
-                                &moe::shared_ranking_cache_path(model_path, &artifact),
-                            );
-                            (
-                                artifact.ranking,
-                                "micro-v1".to_string(),
-                                artifact.origin.label().to_string(),
-                            )
-                        }
+                        Ok(artifact) => (
+                            artifact.ranking,
+                            "micro-v1".to_string(),
+                            artifact.origin.label().to_string(),
+                        ),
                         Err(err) => {
                             eprintln!(
                                 "⚠ [{model_name}] micro-analyze failed ({err}); falling back to sequential expert order"

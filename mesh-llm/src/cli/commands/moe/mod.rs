@@ -207,7 +207,7 @@ async fn run_analyze_micro(
         "🧠 Running micro-v1 MoE analysis with {} prompt(s), {} token(s)",
         prompt_count, token_count
     );
-    let spinner = start_spinner("Running micro-v1 prompts");
+    let mut spinner = start_spinner("Running micro-v1 prompts");
     let mut logs = String::new();
     let mut totals: BTreeMap<u32, (f64, u64)> = BTreeMap::new();
     for (index, prompt) in MICRO_PROMPTS.iter().take(prompt_count).enumerate() {
@@ -255,7 +255,7 @@ async fn run_analyze_micro(
         )
         .ok();
         if !output.status.success() {
-            spinner.finish_and_clear();
+            spinner.finish();
             fs::write(&log_path, logs)?;
             bail!("MoE micro analysis failed. Log: {}", log_path.display());
         }
@@ -265,7 +265,7 @@ async fn run_analyze_micro(
             entry.1 += row.selection_count;
         }
     }
-    spinner.finish_and_clear();
+    spinner.finish();
     fs::write(&log_path, logs)?;
     let artifact = moe::SharedRankingArtifact {
         kind: moe::SharedRankingKind::MicroAnalyze,
@@ -544,14 +544,14 @@ fn log_path_for(model_path: &Path, analyzer_id: &str) -> PathBuf {
 }
 
 fn run_analyzer_command(command: &[String], log_path: &Path, label: &str) -> Result<()> {
-    let spinner = start_spinner(&format!("Running {label}"));
+    let mut spinner = start_spinner(&format!("Running {label}"));
     let output = Command::new(&command[0])
         .args(&command[1..])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
         .with_context(|| format!("Run {}", command[0]))?;
-    spinner.finish_and_clear();
+    spinner.finish();
     fs::write(
         log_path,
         format!(
@@ -612,13 +612,23 @@ impl SpinnerHandle {
         }
     }
 
-    fn finish_and_clear(mut self) {
+    fn finish(&mut self) {
         self.done.store(true, Ordering::Relaxed);
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
         eprint!("\r\x1b[2K");
         let _ = std::io::Write::flush(&mut std::io::stderr());
+    }
+
+    fn finish_and_clear(mut self) {
+        self.finish();
+    }
+}
+
+impl Drop for SpinnerHandle {
+    fn drop(&mut self) {
+        self.finish();
     }
 }
 
