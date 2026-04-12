@@ -713,8 +713,11 @@ pub mod validate {
         process_executable_name(pid)
             .ok()
             .flatten()
-            .or_else(|| process_comm(pid).ok().flatten())
             .is_some_and(|name| name == expected_comm)
+            || process_comm(pid)
+                .ok()
+                .flatten()
+                .is_some_and(|name| name == expected_comm)
     }
 
     /// Returns `true` iff the live process identified by `pid` has:
@@ -2017,6 +2020,19 @@ mod tests {
         assert!(
             !validate::validate_pid_matches(pid, &comm, t + 60),
             "start time off by 60s must be rejected"
+        );
+    }
+
+    #[test]
+    fn process_name_matches_accepts_comm_match_for_self() {
+        let pid = std::process::id();
+        let comm = match validate::process_comm(pid).ok().flatten() {
+            Some(c) => c,
+            None => return,
+        };
+        assert!(
+            validate::process_name_matches(pid, &comm),
+            "a matching comm must be accepted even when executable basename differs"
         );
     }
 
