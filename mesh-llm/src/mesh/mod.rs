@@ -565,7 +565,6 @@ struct RelayPathSnapshot {
 #[derive(Clone, Copy, Debug, Default)]
 struct RelayPeerHealth {
     relay_since: Option<std::time::Instant>,
-    last_direct_at: Option<std::time::Instant>,
     last_reconnect_at: Option<std::time::Instant>,
 }
 
@@ -574,7 +573,6 @@ impl RelayPeerHealth {
         match snapshot.kind {
             SelectedPathKind::Direct => {
                 self.relay_since = None;
-                self.last_direct_at = Some(now);
             }
             SelectedPathKind::Relay => {
                 if self.relay_since.is_none() {
@@ -4487,11 +4485,11 @@ impl Node {
         reason: RelayReconnectReason,
     ) -> bool {
         let (addr, existing_conn) = {
-            let mut state = self.state.lock().await;
+            let state = self.state.lock().await;
             let Some(peer) = state.peers.get(&peer_id).cloned() else {
                 return false;
             };
-            let conn = state.connections.remove(&peer_id);
+            let conn = state.connections.get(&peer_id).cloned();
             (peer.addr, conn)
         };
 
@@ -4510,10 +4508,6 @@ impl Node {
             peer_id.fmt_short(),
             reason.label()
         );
-
-        existing_conn.close(0u32.into(), b"relay-health-refresh");
-        let _ =
-            tokio::time::timeout(std::time::Duration::from_secs(1), existing_conn.closed()).await;
 
         let new_conn = match tokio::time::timeout(
             std::time::Duration::from_secs(10),
@@ -4538,30 +4532,6 @@ impl Node {
             }
         };
 
-        {
-            let mut state = self.state.lock().await;
-            if let Some(current) = state.connections.get(&peer_id) {
-                if !should_remove_connection(Some(current.stable_id()), existing_id) {
-                    tracing::debug!(
-                        "Relay health refresh for {} raced with another reconnect; keeping newer connection",
-                        peer_id.fmt_short()
-                    );
-                    drop(state);
-                    new_conn.close(0u32.into(), b"relay-health-raced");
-                    return false;
-                }
-            }
-            state.connections.insert(peer_id, new_conn.clone());
-        }
-
-        let node_for_dispatch = self.clone();
-        let conn_for_dispatch = new_conn.clone();
-        tokio::spawn(async move {
-            node_for_dispatch
-                .dispatch_streams(conn_for_dispatch, peer_id)
-                .await;
-        });
-
         let gossip_ok = tokio::time::timeout(
             std::time::Duration::from_secs(10),
             self.initiate_gossip_inner(new_conn.clone(), peer_id, false),
@@ -4575,16 +4545,40 @@ impl Node {
                 "Relay health refresh gossip with {} failed",
                 peer_id.fmt_short()
             );
-            let mut state = self.state.lock().await;
-            if should_remove_connection(
-                state.connections.get(&peer_id).map(|conn| conn.stable_id()),
-                new_conn.stable_id(),
-            ) {
-                state.connections.remove(&peer_id);
-            }
             new_conn.close(0u32.into(), b"relay-health-gossip-failed");
             return false;
         }
+
+        {
+            let mut state = self.state.lock().await;
+            if !should_remove_connection(
+                state.connections.get(&peer_id).map(|conn| conn.stable_id()),
+                existing_id,
+            ) {
+                tracing::debug!(
+                    "Relay health refresh for {} raced with another reconnect; keeping newer connection",
+                    peer_id.fmt_short()
+                );
+                drop(state);
+                new_conn.close(0u32.into(), b"relay-health-raced");
+                return false;
+            }
+            // Swap the tracked slot before closing the stale connection so its
+            // dispatcher sees the newer stable_id and exits without reconnecting.
+            state.connections.insert(peer_id, new_conn.clone());
+        }
+
+        let node_for_dispatch = self.clone();
+        let conn_for_dispatch = new_conn.clone();
+        tokio::spawn(async move {
+            node_for_dispatch
+                .dispatch_streams(conn_for_dispatch, peer_id)
+                .await;
+        });
+
+        existing_conn.close(0u32.into(), b"relay-health-refresh");
+        let _ =
+            tokio::time::timeout(std::time::Duration::from_secs(1), existing_conn.closed()).await;
 
         true
     }
@@ -8434,7 +8428,6 @@ mod tests {
             health.relay_since.is_none(),
             "direct path should clear relay-only aging"
         );
-        assert_eq!(health.last_direct_at, Some(now));
     }
 
     #[test]
