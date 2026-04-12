@@ -936,8 +936,10 @@ pub(crate) fn terminate_process_blocking(
         ProcessSignal::Terminate,
     ) {
         SignalOutcome::Sent => {}
-        SignalOutcome::AlreadyDead | SignalOutcome::Skipped => return true,
-        SignalOutcome::Failed => return false,
+        SignalOutcome::AlreadyDead => return true,
+        // Identity mismatch: the PID belongs to a different process; do not
+        // claim a successful stop.
+        SignalOutcome::Skipped | SignalOutcome::Failed => return false,
     }
 
     for _ in 0..20 {
@@ -949,9 +951,9 @@ pub(crate) fn terminate_process_blocking(
         }
     }
 
-    !matches!(
+    matches!(
         send_signal_if_matches(pid, expected_comm, expected_start_time, ProcessSignal::Kill),
-        SignalOutcome::Failed
+        SignalOutcome::Sent | SignalOutcome::AlreadyDead
     )
 }
 

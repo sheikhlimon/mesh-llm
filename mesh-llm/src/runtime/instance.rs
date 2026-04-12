@@ -290,6 +290,25 @@ impl InstanceRuntime {
         fs::create_dir_all(dir.join("pidfiles")).context("failed to create pidfiles directory")?;
         fs::create_dir_all(dir.join("logs")).context("failed to create logs directory")?;
 
+        // On Unix, harden permissions on the runtime directories so that
+        // pidfiles and logs are only readable by the owning user.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let private = std::fs::Permissions::from_mode(0o700);
+            for d in [&root, &dir, &dir.join("pidfiles"), &dir.join("logs")] {
+                // Best-effort: log but don't fail if we can't set permissions
+                // (e.g. on a read-only or network filesystem).
+                if let Err(e) = std::fs::set_permissions(d, private.clone()) {
+                    tracing::debug!(
+                        path = %d.display(),
+                        error = %e,
+                        "could not set restrictive permissions on runtime directory"
+                    );
+                }
+            }
+        }
+
         let lock_path = dir.join("lock");
         // The lock file is opened only to hold a flock — we never write to it.
         // `truncate(false)` is the safe choice: existing locks must not be wiped.
@@ -824,20 +843,26 @@ pub mod reap {
                     cmd_name,
                     child_started_at_unix,
                 } => {
+                    // Treat 0 as "unknown start time" (detection failed at pidfile creation).
+                    let start_time_hint = if *child_started_at_unix == 0 {
+                        None
+                    } else {
+                        Some(*child_started_at_unix)
+                    };
                     let terminated = crate::inference::launch::terminate_process(
                         *child_pid,
                         cmd_name,
-                        Some(*child_started_at_unix),
+                        start_time_hint,
                     )
                     .await;
                     let exited = crate::inference::launch::wait_for_exit(*child_pid, 5000).await;
                     let force_killed = if exited {
-                        true
+                        false
                     } else {
                         crate::inference::launch::force_kill_process(
                             *child_pid,
                             cmd_name,
-                            Some(*child_started_at_unix),
+                            start_time_hint,
                         )
                         .await
                     };
@@ -910,20 +935,26 @@ pub mod reap {
                     cmd_name,
                     child_started_at_unix,
                 } => {
+                    // Treat 0 as "unknown start time" (detection failed at pidfile creation).
+                    let start_time_hint = if *child_started_at_unix == 0 {
+                        None
+                    } else {
+                        Some(*child_started_at_unix)
+                    };
                     let terminated = crate::inference::launch::terminate_process(
                         *child_pid,
                         cmd_name,
-                        Some(*child_started_at_unix),
+                        start_time_hint,
                     )
                     .await;
                     let exited = crate::inference::launch::wait_for_exit(*child_pid, 5000).await;
                     let force_killed = if exited {
-                        true
+                        false
                     } else {
                         crate::inference::launch::force_kill_process(
                             *child_pid,
                             cmd_name,
-                            Some(*child_started_at_unix),
+                            start_time_hint,
                         )
                         .await
                     };
@@ -1191,7 +1222,13 @@ pub(crate) fn collect_runtime_stop_targets(
                     label: metadata.cmd_name.clone(),
                     pid: metadata.child_pid,
                     expected_comm: metadata.cmd_name,
-                    expected_start_time: Some(metadata.child_started_at_unix),
+                    // Treat 0 as "unknown" — start-time detection failed at pidfile
+                    // creation, so omit the hint rather than passing a bogus timestamp.
+                    expected_start_time: if metadata.child_started_at_unix == 0 {
+                        None
+                    } else {
+                        Some(metadata.child_started_at_unix)
+                    },
                 });
             }
         }
