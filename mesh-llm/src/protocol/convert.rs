@@ -475,6 +475,9 @@ pub(crate) fn local_ann_to_proto_ann(
             .owner_attestation
             .as_ref()
             .and_then(local_owner_attestation_to_proto),
+        // Legacy GPU metric fields (29-32) are populated alongside `hardware` so that
+        // pre-v0.60.0 peers that do not decode the new `hardware` block can still read
+        // bandwidth/tflops/reserved data from the flat fields they already know.
         gpu_mem_bandwidth_gbps: ann.gpu_mem_bandwidth_gbps.clone(),
         gpu_compute_tflops_fp32: ann.gpu_compute_tflops_fp32.clone(),
         gpu_compute_tflops_fp16: ann.gpu_compute_tflops_fp16.clone(),
